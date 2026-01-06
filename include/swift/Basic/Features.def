@@ -563,6 +563,9 @@ EXPERIMENTAL_FEATURE(CheckImplementationOnly, true)
 /// report references to implementation-only imported modules.
 EXPERIMENTAL_FEATURE(CheckImplementationOnlyStrict, false)
 
+/// Allows a `get` returning a noncopyable type have owned semantics in opaque interfaces.
+EXPERIMENTAL_FEATURE(UnderscoreOwned, true)
+
 #undef EXPERIMENTAL_FEATURE_EXCLUDED_FROM_MODULE_INTERFACE
 #undef EXPERIMENTAL_FEATURE
 #undef UPCOMING_FEATURE
