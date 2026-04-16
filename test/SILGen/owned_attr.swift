@@ -6,6 +6,7 @@
 // RUN: %target-swift-emit-silgen -module-name X %s -I %t -enable-experimental-feature Lifetimes | %FileCheck %s
 // RUN: %target-swift-emit-sil -module-name X %s -I %t -enable-experimental-feature Lifetimes -verify
 
+// RUN: %target-swift-typecheck-module-from-interface(%t/OwnedAttrLib.swiftinterface)
 // RUN: %FileCheck --check-prefix CHECK-INTERFACE %s < %t/OwnedAttrLib.swiftinterface
 
 // REQUIRES: swift_feature_Lifetimes
