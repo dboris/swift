@@ -1338,6 +1338,19 @@ namespace {
 
       // id maps to Any in bridgeable contexts, AnyObject otherwise.
       if (type->isObjCIdType()) {
+        // HARMONY (slice 6e): off-Darwin, id imports as AnyObject in ALL
+        // contexts. Erasing a non-Swift class instance into Any requires the
+        // SWIFT_OBJC_INTEROP runtime (swift_getObjectType reads the instance
+        // isa as Swift metadata and the existential copy walks its value-
+        // witness table) -- on the libobjc2-native stack that is a garbage
+        // read. AnyObject is also the honest type there: every id IS an
+        // objc_msgSend-able libobjc2 object (Harmony ADR 0005), and AnyObject
+        // references refcount on the unknown-object path (objc_retain via the
+        // interop shim) and dispatch through objc_msgSend.
+        if (!Impl.SwiftContext.LangOpts.Target.isOSDarwin()) {
+          return { Impl.SwiftContext.getAnyObjectType(),
+                   ImportHint::ObjCPointer };
+        }
         return { Impl.SwiftContext.getAnyObjectType(),
                  ImportHint(ImportHint::ObjCBridged,
                             Impl.SwiftContext.getAnyExistentialType())};
