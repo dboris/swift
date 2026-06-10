@@ -47,6 +47,16 @@ using namespace swift::hashable_support;
 // but we would need to be able to emit __SwiftValue's Objective-C class object
 // with the Swift destructor pointer prefixed before it.
 //
+// HARMONY (option (c), off-Darwin): __SwiftValue DOES root on SwiftObject --
+// the eager NSObject superclass reference was the stdlib's main hard
+// Foundation dependency, and removing it makes libswiftCore loadable in a
+// Foundation-free process.  SwiftObject ancestry means the runtime
+// classifies boxes as NATIVE-refcounted (the hierarchy walk), so the box
+// is allocated as a real HeapObject (swift_allocObject: metadata = the
+// class, refCounts initialized); retain/release run natively on refCounts.
+// Deallocation routes through -dealloc via _swift_release_dealloc's
+// clang-defined-class branch (the isa has no heap-destroyer prefix).
+//
 // The layout of `__SwiftValue` is:
 // - object header,
 // - `SwiftValueHeader` instance,
@@ -55,7 +65,11 @@ using namespace swift::hashable_support;
 // NOTE: older runtimes called this _SwiftValue. The two must
 // coexist, so it was renamed. The old name must not be used in the new
 // runtime.
+#if defined(__APPLE__)
 @interface __SwiftValue : NSObject <NSCopying>
+#else
+@interface __SwiftValue : SwiftObject <NSCopying>
+#endif
 
 - (id)copyWithZone:(NSZone *)zone;
 
@@ -232,10 +246,20 @@ SwiftValueHeader::getEquatableConformance() const {
   }
 }
 
+#if defined(__APPLE__)
 static constexpr const size_t SwiftValueHeaderOffset
   = sizeof(Class); // isa pointer
 static constexpr const size_t SwiftValueMinAlignMask
   = alignof(Class) - 1;
+#else
+// HARMONY (option (c)): rooted on SwiftObject, the instance opens with
+// isa + the (unused by the box) InlineRefCounts ivar -- HeapObject's exact
+// shape -- and the header follows it.
+static constexpr const size_t SwiftValueHeaderOffset
+  = sizeof(HeapObject);
+static constexpr const size_t SwiftValueMinAlignMask
+  = alignof(HeapObject) - 1;
+#endif
 /* TODO: If we're able to become a SwiftObject subclass in the future,
  * change to this:
 static constexpr const size_t SwiftValueHeaderOffset
@@ -259,24 +283,6 @@ static Class getSwiftValueClass() {
 static constexpr size_t getSwiftValuePayloadOffset(size_t alignMask) {
   return (SwiftValueHeaderOffset + sizeof(SwiftValueHeader) + alignMask) &
          ~alignMask;
-}
-
-// HARMONY: libobjc2 keeps an object's slow-path retain count in a hidden
-// word at obj[-1] (objc_retain_fast_np / NSExtraRefCount; the runtime's
-// own allocator reserves it in class_createInstance).  __SwiftValue
-// allocates its own memory, so reserve one alignment unit in front and
-// place the instance past it -- otherwise every retain/release writes
-// into the enclosing malloc chunk's header and the box can never reach
-// retain-count zero (it leaks, with the header corrupted while retained).
-// A zeroed prefix means extra-refcount 0 == retain count 1, matching a
-// freshly calloc'd class_createInstance object.  Darwin reserves nothing
-// (objc4 refcounts via isa bits / side tables).
-static constexpr size_t getSwiftValueInstancePrefix(size_t alignMask) {
-#if defined(__APPLE__)
-  return 0;
-#else
-  return alignMask + 1;
-#endif
 }
 
 static SwiftValueHeader *getSwiftValueHeader(__SwiftValue *v) {
@@ -314,14 +320,8 @@ __SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
   size_t totalSize =
       getSwiftValuePayloadOffset(alignMask) + srcType->getValueWitnesses()->size;
 
-  size_t prefix = getSwiftValueInstancePrefix(alignMask);
-  void *allocation = swift_slowAlloc(totalSize + prefix, alignMask);
-  void *instanceMemory = reinterpret_cast<char *>(allocation) + prefix;
-  if (prefix > 0) {
-    // The hidden retain-count word must start at zero (swift_slowAlloc
-    // memory is not).
-    reinterpret_cast<uintptr_t *>(instanceMemory)[-1] = 0;
-  }
+#if defined(__APPLE__)
+  void *instanceMemory = swift_slowAlloc(totalSize, alignMask);
   __SwiftValue *instance
     = objc_constructInstance(getSwiftValueClass(), instanceMemory);
   /* TODO: If we're able to become a SwiftObject subclass in the future,
@@ -329,6 +329,14 @@ __SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
   auto instance = swift_allocObject(getSwiftValueClass(), totalSize,
                                     alignMask);
    */
+#else
+  // HARMONY (option (c)): a real HeapObject -- metadata = the class,
+  // refCounts initialized -- because SwiftObject ancestry makes the
+  // runtime refcount boxes natively (see the @interface comment).
+  auto instance = reinterpret_cast<__SwiftValue *>(swift_allocObject(
+      reinterpret_cast<HeapMetadata *>(getSwiftValueClass()), totalSize,
+      alignMask));
+#endif
 
   auto header = getSwiftValueHeader(instance);
   ::new (header) SwiftValueHeader();
@@ -416,14 +424,11 @@ swift::findSwiftValueConformances(const ExistentialTypeMetadata *existentialType
   getSwiftValueHeader(self)->~SwiftValueHeader();
   instanceType->vw_destroy(getSwiftValuePayload(self, alignMask));
 
-  // Deallocate ourselves (including the hidden-word prefix, see
-  // getSwiftValueInstancePrefix).
+  // Deallocate ourselves.
   objc_destructInstance(self);
   auto totalSize = getSwiftValuePayloadOffset(alignMask) +
                    instanceType->getValueWitnesses()->size;
-  size_t prefix = getSwiftValueInstancePrefix(alignMask);
-  swift_slowDealloc(reinterpret_cast<char *>(self) - prefix,
-                    totalSize + prefix, alignMask);
+  swift_slowDealloc(self, totalSize, alignMask);
 }
 #pragma clang diagnostic pop
 

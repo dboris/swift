@@ -14,12 +14,17 @@
 
 #if SWIFT_OBJC_INTEROP
 #include "swift/Basic/Lazy.h"
+#include "swift/Runtime/HeapObject.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/ObjCBridge.h"
 #include "swift/Runtime/Portability.h"
 #include "swift/Threading/Mutex.h"
 #import <CoreFoundation/CoreFoundation.h>
 #import <Foundation/Foundation.h>
+#include <objc/runtime.h>
+#if !defined(__APPLE__)
+#include "../runtime/SwiftObject.h"
+#endif
 #include <vector>
 
 using namespace swift;
@@ -30,15 +35,38 @@ using namespace swift;
 /// NOTE: older runtimes called this _SwiftNull. The two must
 /// coexist, so it was renamed. The old name must not be used in the new
 /// runtime.
+#if defined(__APPLE__)
 @interface __SwiftNull : NSObject {
 @public
   unsigned depth;
 }
 @end
+#else
+// HARMONY (option (c)): root on SwiftObject -- no eager NSObject ref; the
+// stdlib loads in Foundation-free processes.  SwiftObject ancestry makes
+// the runtime refcount sentinels NATIVELY (the hierarchy walk), so +alloc
+// builds a real HeapObject (metadata = the class, refCounts initialized);
+// the sentinel cache holds its +1 forever, so balanced user
+// retain/release can never reach zero.
+@interface __SwiftNull : SwiftObject {
+@public
+  unsigned depth;
+}
+@end
+#endif
 
 
 
-@implementation __SwiftNull : NSObject
+@implementation __SwiftNull
+
+#if !defined(__APPLE__)
++ (instancetype)alloc {
+  return (__SwiftNull *)swift_allocObject(
+      reinterpret_cast<HeapMetadata *>(self), class_getInstanceSize(self),
+      alignof(std::max_align_t) - 1);
+}
+- (instancetype)init { return self; }
+#endif
 
 - (id)description {
   char *str = NULL;

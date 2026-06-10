@@ -34,6 +34,9 @@
 
 #if SWIFT_OBJC_INTEROP
 #import <Foundation/Foundation.h>
+#if !defined(__APPLE__)
+#include "../runtime/SwiftObject.h"
+#endif
 #import <CoreFoundation/CoreFoundation.h>
 #include <objc/NSObject.h>
 #include <objc/runtime.h>
@@ -52,18 +55,42 @@ using namespace swift;
 // runtime.
 % for Class in ('Array', 'MutableArray', 'Dictionary', 'Set', 'String', 'Enumerator'):
 SWIFT_RUNTIME_STDLIB_API
+#if defined(__APPLE__)
 @interface __SwiftNativeNS${Class}Base : NSObject
 {
  @private
   SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
 }
 @end
+#else
+// HARMONY (option (c)): root on SwiftObject -- no eager NSObject ref; the
+// stdlib loads in Foundation-free processes.  Layout is byte-identical:
+// SwiftObject already IS isa + SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS, exactly
+// what the NSObject-rooted declaration added by hand, so the Swift
+// subclasses' ivar offsets are unchanged.  Instances only ever exist as
+// Swift-defined subclasses (real Swift metadata), so the inherited
+// SwiftObject surface (retain/release via swift_retain, isEqual:, hash,
+// respondsToSelector:, ...) is fully valid.
+@interface __SwiftNativeNS${Class}Base : SwiftObject
+@end
+#endif
 
 
 @implementation __SwiftNativeNS${Class}Base
 
+#if !defined(__APPLE__)
+// SwiftObject defines no -init; preserve the NSObject-rooted behavior for
+// the initWithCoder path below.
+- (instancetype)init { return self; }
+#endif
+
 - (instancetype)initWithCoder: (NSCoder *)coder {
+#if defined(__APPLE__)
   return [super init];
+#else
+  // SwiftObject declares no -init; -init above returns self.
+  return self;
+#endif
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key {

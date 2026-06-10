@@ -833,6 +833,22 @@ void swift::swift_unownedCheck(HeapObject *object) {
 }
 
 void _swift_release_dealloc(HeapObject *object) {
+#if SWIFT_OBJC_INTEROP && !defined(__APPLE__)
+  // HARMONY (option (c)): a clang-defined ObjC class rooted on SwiftObject
+  // (__SwiftValue, __SwiftNull) is native-refcounted -- the hierarchy walk
+  // classifies it native, so releases land here -- but its isa is a plain
+  // ObjC class object with NO heap-destroyer prefix; reading
+  // fullMetadata->destroy would be a wild load.  Such metadata is exactly
+  // "class kind without the Swift type-metadata bit": route to -dealloc.
+  auto metadata = object->metadata;
+  if (metadata->isClassObject() &&
+      !static_cast<const ClassMetadata *>(metadata)->isTypeMetadata()) {
+    static SEL deallocSelector = sel_registerName("dealloc");
+    reinterpret_cast<void (*)(void *, SEL)>(objc_msgSend)(object,
+                                                          deallocSelector);
+    return;
+  }
+#endif
   asFullMetadata(object->metadata)->destroy(object);
 }
 
