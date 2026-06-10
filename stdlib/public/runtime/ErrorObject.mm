@@ -48,6 +48,7 @@ using namespace swift::hashable_support;
 
 // Mimic the memory layout of NSError so things don't go haywire when we
 // switch superclasses to the real thing.
+#if defined(__APPLE__)
 @interface __SwiftNSErrorLayoutStandin : NSObject {
   @private
   void *_reserved;
@@ -56,6 +57,24 @@ using namespace swift::hashable_support;
   id _userInfo;
 }
 @end
+#else
+// HARMONY (option (c)): no eager NSObject superclass ref -- the stdlib
+// loads in Foundation-free processes.  The standin exists ONLY to mimic
+// NSError's layout (isa + the three fields) until the runtime swaps
+// __SwiftNativeNSError's superclass to the real NSError; an explicit root
+// class with an isa ivar is that exact layout with no dependency.  It is
+// never messaged before the swap.
+__attribute__((objc_root_class))
+@interface __SwiftNSErrorLayoutStandin {
+  Class isa;
+  @private
+  void *_reserved;
+  NSInteger _code;
+  id _domain;
+  id _userInfo;
+}
+@end
+#endif
 
 @implementation __SwiftNSErrorLayoutStandin
 @end

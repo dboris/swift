@@ -68,6 +68,18 @@
 #endif
 
 using namespace swift;
+
+// HARMONY (option (c)): NSObject must not be an eager classref -- the
+// stdlib loads in Foundation-free processes, where the lookup returns Nil
+// and the callers' comparisons simply fail.  On Darwin NSObject lives in
+// libobjc and the eager form is fine; keep it for zero behavior delta.
+static Class _swiftObjectNSObjectClassIfPresent() {
+#if defined(__APPLE__)
+  return [NSObject class];
+#else
+  return objc_lookUpClass("NSObject");
+#endif
+}
 using namespace hashable_support;
 
 #if SWIFT_HAS_ISA_MASKING
@@ -1204,7 +1216,8 @@ swift_dynamicCastObjCClassImpl(const void *object,
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
   if (targetType == reinterpret_cast<const ClassMetadata*>(getNSErrorClass()) ||
-      targetType == reinterpret_cast<const ClassMetadata*>([NSObject class])) {
+      targetType == reinterpret_cast<const ClassMetadata*>(
+          _swiftObjectNSObjectClassIfPresent())) {
     auto srcType = swift_getObjCClassMetadata(
         reinterpret_cast<const ClassMetadata*>(
           object_getClass(id_const_cast(object))));
@@ -1234,7 +1247,8 @@ swift_dynamicCastObjCClassUnconditionalImpl(const void *object,
   // For casts to NSError or NSObject, we might need to bridge via the Error
   // protocol. Try it now.
   if (targetType == reinterpret_cast<const ClassMetadata*>(getNSErrorClass()) ||
-      targetType == reinterpret_cast<const ClassMetadata*>([NSObject class])) {
+      targetType == reinterpret_cast<const ClassMetadata*>(
+          _swiftObjectNSObjectClassIfPresent())) {
     auto srcType = swift_getObjCClassMetadata(
         reinterpret_cast<const ClassMetadata*>(
           object_getClass(id_const_cast(object))));
@@ -1771,7 +1785,7 @@ void swift_objc_swift3ImplicitObjCEntrypoint(id self, SEL selector,
 
 const Metadata *swift::getNSObjectMetadata() {
   return SWIFT_LAZY_CONSTANT(
-      swift_getObjCClassMetadata((const ClassMetadata *)[NSObject class]));
+      swift_getObjCClassMetadata((const ClassMetadata *)_swiftObjectNSObjectClassIfPresent()));
 }
 
 const Metadata *swift::getNSStringMetadata() {

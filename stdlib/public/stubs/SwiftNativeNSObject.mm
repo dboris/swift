@@ -26,18 +26,32 @@
 #include "swift/Runtime/HeapObject.h"
 #include "swift/Runtime/Metadata.h"
 #include "swift/Runtime/ObjCBridge.h"
+#if !defined(__APPLE__)
+#include "../runtime/SwiftObject.h"
+#endif
 
 using namespace swift;
 
 SWIFT_RUNTIME_STDLIB_API
+#if defined(__APPLE__)
 @interface SwiftNativeNSObject : NSObject
 {
 @private
   SWIFT_HEAPOBJECT_NON_OBJC_MEMBERS;
 }
 @end
+#else
+// HARMONY (option (c)): root on SwiftObject -- see SwiftNativeNSXXXBase;
+// same layout-identity argument, same Swift-subclass-only instances.
+@interface SwiftNativeNSObject : SwiftObject
+@end
+#endif
 
 @implementation SwiftNativeNSObject
+
+#if !defined(__APPLE__)
+- (instancetype)init { return self; }
+#endif
 
 + (instancetype)allocWithZone: (NSZone *)zone {
   // Allocate the object with swift_allocObject().
@@ -51,7 +65,12 @@ SWIFT_RUNTIME_STDLIB_API
 }
 
 - (instancetype)initWithCoder: (NSCoder *)coder {
+#if defined(__APPLE__)
   return [super init];
+#else
+  // SwiftObject declares no -init; -init above returns self.
+  return self;
+#endif
 }
 
 + (BOOL)automaticallyNotifiesObserversForKey:(NSString *)key {

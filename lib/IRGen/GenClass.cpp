@@ -2883,10 +2883,19 @@ ClassDecl *irgen::getRootClassForMetaclass(IRGenModule &IGM, ClassDecl *C) {
   
   // FIXME: If the root class specifies its own runtime ObjC base class,
   // assume that base class ultimately inherits NSObject.
-  if (C->getAttrs().hasAttribute<SwiftNativeObjCRuntimeBaseAttr>())
+  if (C->getAttrs().hasAttribute<SwiftNativeObjCRuntimeBaseAttr>()) {
+    // HARMONY (option (c)): off-Darwin the stdlib's runtime-base stubs
+    // (__SwiftNativeNS*Base, SwiftNativeNSObject) root on SwiftObject so
+    // libswiftCore carries no eager NSObject reference and loads in
+    // Foundation-free processes; the emitted metaclass chain must agree
+    // with that root.
+    if (!IGM.Context.LangOpts.Target.isOSDarwin())
+      return IGM.getObjCRuntimeBaseClass(IGM.Context.Id_SwiftObject,
+                                         IGM.Context.Id_SwiftObject);
     return IGM.getObjCRuntimeBaseClass(
              IGM.Context.getSwiftId(KnownFoundationEntity::NSObject),
              IGM.Context.getIdentifier("NSObject"));
+  }
 
   return IGM.getObjCRuntimeBaseClass(IGM.Context.Id_SwiftObject,
                                      IGM.Context.Id_SwiftObject);
