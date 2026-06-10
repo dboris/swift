@@ -384,6 +384,22 @@ function(_add_target_variant_c_compile_flags)
 
   if(NOT SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
     list(APPEND result "-DSWIFT_OBJC_INTEROP=0")
+  elseif(NOT "${CFLAGS_SDK}" MATCHES "OSX|IOS|TVOS|WATCHOS|XROS")
+    # HARMONY (slice 6h): on non-Apple targets, Runtime/Config.h defaults the
+    # macro to 0, so merely OMITTING -DSWIFT_OBJC_INTEROP=0 (all the option
+    # used to do) was a silent no-op -- slice 5 enabled the option and the
+    # stdlib still built native. Flip it POSITIVELY, point the runtime's
+    # <objc/*.h> includes at libobjc2 (SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR),
+    # and give the .mm runtime sources the gnustep-3.0 runtime flags (the
+    # option-A 5-word class head doubles as the objc4 layout Swift expects;
+    # -fobjc-runtime is unused-argument noise on the .c/.cpp sources).
+    list(APPEND result "-DSWIFT_OBJC_INTEROP=1")
+    if(SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR)
+      list(APPEND result "-I${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
+    endif()
+    list(APPEND result "-fblocks" "-fobjc-runtime=gnustep-3.0"
+                       "-D__GNUSTEP_RUNTIME_ABI_30__"
+                       "-Wno-unused-command-line-argument")
   endif()
 
   if(SWIFT_STDLIB_COMPACT_ABSOLUTE_FUNCTION_POINTER)

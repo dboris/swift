@@ -626,6 +626,14 @@ function(_compile_swift_files
 
   if(NOT SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
     list(APPEND swift_flags "-Xfrontend" "-disable-objc-interop")
+  elseif(NOT "${SWIFT_SDK_${sdk}_OBJECT_FORMAT}" STREQUAL "MACHO")
+    # HARMONY (slice 6h): off-Darwin the frontend DEFAULTS interop off
+    # (Target.isOSDarwin gate), so the option must enable it positively for
+    # the stdlib's _runtime(_ObjC) regions to compile at all. The stdlib has
+    # no Foundation/ObjectiveC module to satisfy the @objc prerequisite
+    # check, so disable that requirement like user code on this stack does.
+    list(APPEND swift_flags "-Xfrontend" "-enable-objc-interop")
+    list(APPEND swift_flags "-Xfrontend" "-disable-objc-attr-requires-foundation-module")
   endif()
 
   if(SWIFT_STDLIB_EXPERIMENTAL_HERMETIC_SEAL_AT_LINK)
