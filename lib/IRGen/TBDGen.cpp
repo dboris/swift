@@ -669,14 +669,26 @@ std::vector<std::string>
 PublicSymbolsRequest::evaluate(Evaluator &evaluator,
                                TBDGenDescriptor desc) const {
   std::vector<std::string> symbols;
+  // HARMONY: the TextAPI ObjC prefixes are assembler-level Mach-O names
+  // (leading underscore from the global prefix).  ELF symbols carry no
+  // global prefix -- and the TBD validator mangles IR names with the target
+  // DataLayout, which is the identity on ELF -- so expand ObjC class
+  // entries with the unprefixed names there.
+  const auto &triple = desc.getParentModule()->getASTContext().LangOpts.Target;
+  StringRef objcClassPrefix = llvm::MachO::ObjC2ClassNamePrefix;
+  StringRef objcMetaclassPrefix = llvm::MachO::ObjC2MetaClassNamePrefix;
+  if (!triple.isOSBinFormatMachO()) {
+    objcClassPrefix = objcClassPrefix.drop_front();
+    objcMetaclassPrefix = objcMetaclassPrefix.drop_front();
+  }
   auto addSymbol = [&](StringRef symbol, EncodeKind kind, SymbolSource source,
                        Decl *decl, SymbolFlags flags) {
     if (kind == EncodeKind::GlobalSymbol)
       symbols.push_back(symbol.str());
     // TextAPI ObjC Class Kinds represents two symbols.
     else if (kind == EncodeKind::ObjectiveCClass) {
-      symbols.push_back((llvm::MachO::ObjC2ClassNamePrefix + symbol).str());
-      symbols.push_back((llvm::MachO::ObjC2MetaClassNamePrefix + symbol).str());
+      symbols.push_back((llvm::Twine(objcClassPrefix) + symbol).str());
+      symbols.push_back((llvm::Twine(objcMetaclassPrefix) + symbol).str());
     }
   };
   SimpleAPIRecorder recorder(addSymbol);

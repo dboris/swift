@@ -399,11 +399,41 @@ function(_add_target_variant_c_compile_flags)
     # dir, and the CoreFoundation header dir (ErrorObject.h includes
     # <CoreFoundation/CoreFoundation.h> -- served by the s-c-f CF headers,
     # the same CF that is in-process at runtime on the Harmony stack).
+    # -isystem, not -I: on Darwin these arrive as framework/system headers,
+    # so clang suppresses diagnostics inside them; a plain -I exposes them
+    # to the runtime's -Werror set (variadic-macro + narrowing errors in
+    # CFStream.h/ForSwiftFoundationOnly.h).  -isystem is Darwin parity.
     if(SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR)
-      list(APPEND result "-I${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
+      list(APPEND result "-isystem${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
     endif()
     if(SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR)
-      list(APPEND result "-I${SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR}")
+      list(APPEND result "-isystem${SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR}")
+    endif()
+    # The Foundation the runtime's .mm files #import (SwiftObject.mm,
+    # ErrorObject.mm, SwiftValue.mm, ReflectionMirrorObjC.mm) is the
+    # in-process ObjC Foundation (WinCatalyst's on the Harmony stack).
+    # Its headers need the same serving environment the proven consumer
+    # view uses (scripts/run-swift-foundation-gate.sh: the nstest target's
+    # compile flags): a COLON-separated include-dir list (semicolons do
+    # not survive --extra-cmake-options) plus the WinObjC consumer-view
+    # macros and MS-extension flags its headers require.
+    if(SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS)
+      string(REPLACE ":" ";" _harmony_ns_include_dirs
+             "${SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS}")
+      foreach(_harmony_ns_dir ${_harmony_ns_include_dirs})
+        list(APPEND result "-isystem${_harmony_ns_dir}")
+      endforeach()
+      list(APPEND result
+           "-fdeclspec" "-fms-extensions"
+           "-Wno-ignored-attributes" "-Wno-unknown-attributes"
+           "-DCF_IMPLICIT_BRIDGING_DISABLED=" "-DCF_IMPLICIT_BRIDGING_ENABLED="
+           "-DDEPLOYMENT_RUNTIME_SWIFT=1" "-DDEPLOYMENT_TARGET_LINUX"
+           "-DGNUSTEP" "-DGNUSTEP_RUNTIME=1" "-DGNUSTEP_WITH_DLL"
+           "-DNOTINPLAN_METHOD=" "-DNOTINPLAN_PROPERTY="
+           "-DSB_IMPEXP=" "-DSTUB_METHOD=" "-DSTUB_PROPERTY="
+           "-DU_SHOW_CPLUSPLUS_API=0"
+           "-DWINOBJC" "-D_NATIVE_OBJC_EXCEPTIONS" "-D_NONFRAGILE_ABI=1"
+           "-D_GNU_SOURCE")
     endif()
     list(APPEND result "-fblocks" "-fobjc-runtime=gnustep-3.0"
                        "-D__GNUSTEP_RUNTIME_ABI_30__"
@@ -3428,6 +3458,26 @@ function(add_swift_target_executable name)
       target_link_libraries(${VARIANT_NAME} PRIVATE
         ${SWIFTEXE_TARGET_LINK_LIBRARIES_TARGETS}
         ${swiftexe_link_libraries_targets})
+
+      # HARMONY (slice 6i): with ObjC interop on, every Swift class this
+      # executable defines emits objc4 metadata referencing libobjc data
+      # symbols (_objc_empty_cache), and these executables link with plain
+      # clang++ (no swiftc driver to add -lobjc implicitly).  Also
+      # --allow-shlib-undefined: libswiftCore.so carries undefined
+      # references to the ObjC Foundation's NSObject (and CF, if reached)
+      # BY DESIGN -- the application's Foundation satisfies them at runtime
+      # on this stack -- and lld defaults to --no-allow-shlib-undefined
+      # when linking executables.  Build-tree tools linked this way must
+      # not exercise cocoa paths without a Foundation in-process.
+      if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP AND
+         SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR AND
+         "${SWIFT_SDK_${sdk}_OBJECT_FORMAT}" STREQUAL "ELF")
+        target_link_directories(${VARIANT_NAME} PRIVATE
+          "${SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR}")
+        target_link_libraries(${VARIANT_NAME} PRIVATE "objc")
+        target_link_options(${VARIANT_NAME} PRIVATE
+          "-Wl,--allow-shlib-undefined")
+      endif()
 
       if(NOT "${VARIANT_SUFFIX}" STREQUAL "${SWIFT_PRIMARY_VARIANT_SUFFIX}")
         # By default, don't build executables for target SDKs to avoid building

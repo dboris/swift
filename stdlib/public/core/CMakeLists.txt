@@ -317,6 +317,15 @@ elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "LINUX")
   if(SWIFT_BUILD_STATIC_STDLIB)
     list(APPEND swift_core_private_link_libraries)
   endif()
+  # HARMONY (slice 6i): with ObjC interop really on, the runtime calls
+  # libobjc2 directly (objc_msgSend, objc_retain, objc_readClassPair, ...),
+  # so libswiftCore must link libobjc.  SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR is
+  # a single-path cache var like the interop include vars (list separators
+  # do not survive build-script's --extra-cmake-options handling).
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP AND SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR)
+    list(APPEND swift_core_link_flags "-L${SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR}")
+    list(APPEND swift_core_private_link_libraries "objc")
+  endif()
 elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "WINDOWS")
   list(APPEND swift_core_private_link_libraries shell32;DbgHelp;Synchronization)
 endif()

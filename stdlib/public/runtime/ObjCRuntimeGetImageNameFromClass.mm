@@ -19,7 +19,18 @@
 #include "ObjCRuntimeGetImageNameFromClass.h"
 #include "swift/Runtime/Config.h"
 
-#if SWIFT_OBJC_INTEROP
+// HARMONY (slice 6i): everything in this file is Darwin image machinery --
+// class_getImageName / objc_setHook_getImageName / objc_addLoadImageFunc are
+// objc4+dyld SPI and the pre-2018 fallback patches Mach-O lazy pointers --
+// and it exists so +[NSBundle bundleForClass:] understands Swift classes.
+// libobjc2 has no class_getImageName at all, so off-Darwin the setup is an
+// honest no-op (an NSBundle-for-Swift-classes story would be new work at the
+// Foundation layer, not a port of this file).
+#if SWIFT_OBJC_INTEROP && !defined(__APPLE__)
+
+void swift::setUpObjCRuntimeGetImageNameFromClass() {}
+
+#elif SWIFT_OBJC_INTEROP
 
 #include "swift/Runtime/Metadata.h"
 

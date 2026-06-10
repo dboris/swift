@@ -626,12 +626,18 @@ function(_compile_swift_files
 
   if(NOT SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
     list(APPEND swift_flags "-Xfrontend" "-disable-objc-interop")
-  elseif(NOT "${SWIFT_SDK_${sdk}_OBJECT_FORMAT}" STREQUAL "MACHO")
+  elseif(NOT "${SWIFT_SDK_${SWIFTFILE_SDK}_OBJECT_FORMAT}" STREQUAL "MACHO"
+         AND NOT "${SWIFTFILE_SDK}" STREQUAL "embedded")
     # HARMONY (slice 6h): off-Darwin the frontend DEFAULTS interop off
     # (Target.isOSDarwin gate), so the option must enable it positively for
     # the stdlib's _runtime(_ObjC) regions to compile at all. The stdlib has
     # no Foundation/ObjectiveC module to satisfy the @objc prerequisite
     # check, so disable that requirement like user code on this stack does.
+    # NOT for the embedded-stdlib variants (sdk "embedded"): the frontend
+    # rejects -enable-objc-interop with the Embedded feature, and only
+    # stdlib/public/core's embedded block resets the OPTION in its directory
+    # scope -- other embedded modules (_Volatile, ...) reach here with the
+    # option still ON.
     list(APPEND swift_flags "-Xfrontend" "-enable-objc-interop")
     list(APPEND swift_flags "-Xfrontend" "-disable-objc-attr-requires-foundation-module")
   endif()

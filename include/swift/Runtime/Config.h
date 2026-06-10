@@ -155,9 +155,19 @@ extern uintptr_t __COMPATIBILITY_LIBRARIES_CANNOT_CHECK_THE_IS_SWIFT_BIT_DIRECTL
 # elif defined(__APPLE__)
 #  define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
 
-// Non-Apple platforms always use 1.
+// HARMONY (slice 6i): non-Apple platforms use 2 as well.  IRGen emits the
+// class-data Swift bit as `UseDarwinPreStableABIBit ? 1 : 2`
+// (GenMeta.cpp, getClassDataPointerHasSwiftMetadataBits), and
+// UseDarwinPreStableABIBit is only ever true for old Darwin deployment
+// targets -- so the bit actually EMITTED off-Darwin is 2, and the 1 that
+// used to be here never matched it.  Latent upstream inconsistency,
+// invisible until SWIFT_OBJC_INTEROP really runs off-Darwin: the first
+// isTypeMetadata() on a swiftc-emitted class then answers NO (caught as
+// an assert in getDescription() during _ContiguousArrayStorage's
+// superclass walk).  libobjc2's Path-B detection accepts either bit
+// (OBJC_FAST_IS_SWIFT_MASK 0x3), so only this macro was out of line.
 # else
-#  define SWIFT_CLASS_IS_SWIFT_MASK 1ULL
+#  define SWIFT_CLASS_IS_SWIFT_MASK 2ULL
 
 # endif
 #endif

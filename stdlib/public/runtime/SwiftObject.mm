@@ -60,7 +60,10 @@
 #if SWIFT_OBJC_INTEROP
 # import <CoreFoundation/CFBase.h> // for CFTypeID
 # import <Foundation/Foundation.h>
-# include <malloc/malloc.h>
+// HARMONY: libmalloc is Darwin-only; the sole consumer is -zone below.
+# if __has_include(<malloc/malloc.h>)
+#  include <malloc/malloc.h>
+# endif
 # include <dispatch/dispatch.h>
 #endif
 
@@ -263,8 +266,14 @@ static id _getClassDescription(Class cls) {
 }
 
 - (struct _NSZone *)zone {
+#if __has_include(<malloc/malloc.h>)
   auto zone = malloc_zone_from_ptr(self);
   return (struct _NSZone *)(zone ? zone : malloc_default_zone());
+#else
+  // HARMONY: no malloc zones off-Darwin; NSZone is vestigial API and a
+  // null zone is the accepted answer on this stack.
+  return nullptr;
+#endif
 }
 
 - (void)doesNotRecognizeSelector: (SEL) sel {
@@ -1803,3 +1812,10 @@ const ClassMetadata *swift::getRootSuperclass() {
 
 #define OVERRIDE_FOREIGN COMPATIBILITY_OVERRIDE
 #include "../CompatibilityOverride/CompatibilityOverrideIncludePath.h"
+
+#if SWIFT_OBJC_INTEROP
+// HARMONY: swiftc-emitted stdlib code references SwiftObject (objc runtime
+// name _TtCs12_SwiftObject) by its objc4 symbol names; this TU defines it
+// with gnustep codegen.
+SWIFT_HARMONY_OBJC4_CLASS_ALIAS(_TtCs12_SwiftObject);
+#endif

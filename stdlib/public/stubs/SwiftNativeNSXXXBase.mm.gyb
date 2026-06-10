@@ -78,6 +78,10 @@ STANDARD_OBJC_METHOD_IMPLS_FOR_SWIFT_OBJECTS
 #pragma clang diagnostic pop
 
 @end
+
+// HARMONY: swiftc-emitted stdlib code (@_swift_native_objc_runtime_base
+// subclasses) references this class by its objc4 symbol names.
+SWIFT_HARMONY_OBJC4_CLASS_ALIAS(__SwiftNativeNS${Class}Base);
 % end
 
 SWIFT_CC(swift) SWIFT_RUNTIME_STDLIB_SPI

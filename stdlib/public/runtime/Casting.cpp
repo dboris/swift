@@ -1366,8 +1366,12 @@ static id bridgeAnythingNonVerbatimToObjectiveC(OpaqueValue *src,
       if (existential->isObjC() && existential->NumProtocols == 1) {
         // Though they're statically-allocated globals, Protocol inherits
         // NSObject's default refcounting behavior so must be retained.
+        // HARMONY: cast for libobjc2, whose Protocol is the isa-first
+        // struct objc_protocol rather than objc_object itself; objc4
+        // typedefs Protocol to objc_object in C++, so the cast is an
+        // identity there.
         auto protocolObj = existential->getProtocols()[0].getObjCProtocol();
-        return objc_retain(protocolObj);
+        return objc_retain((id)protocolObj);
       }
     }
   }
