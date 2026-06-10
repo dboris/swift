@@ -75,6 +75,29 @@ DECLARE_SWIFT_SECTION(swift5_runtime_attributes)
 DECLARE_SWIFT_SECTION(swift5_tests)
 }
 
+#if SWIFT_OBJC_INTEROP && defined(__ELF__) && !defined(__APPLE__)
+// HARMONY: under ObjC interop over libobjc2, swiftc also emits objc4-shaped
+// ObjC metadata sections that the GNUstep runtime's own loader never scans:
+// objc_selrefs (selector references to unique in place) and objc_classlist
+// (classes to register via objc_readClassPair).  Register them from this
+// image constructor through libobjc2's loader entry point -- declared
+// weakly so images linked without libobjc stay loadable (their sections
+// are empty anyway).  Section attributes match swiftc's emission exactly
+// (selrefs: write+alloc; classlist: write+alloc+retain) so the empty
+// declarations merge with the real sections.
+extern "C" {
+DECLARE_EMPTY_METADATA_SECTION(objc_selrefs, "aw")
+DECLARE_BOUNDS(objc_selrefs)
+DECLARE_EMPTY_METADATA_SECTION(objc_classlist, "awR")
+DECLARE_BOUNDS(objc_classlist)
+
+void objc_load_swift_image_np(const char **selrefs_begin,
+                              const char **selrefs_end,
+                              void **classlist_begin,
+                              void **classlist_end) __attribute__((__weak__));
+}
+#endif
+
 #undef DECLARE_SWIFT_SECTION
 
 namespace {
@@ -126,5 +149,20 @@ static void swift_image_constructor() {
 #undef SWIFT_SECTION_RANGE
 
   swift_addNewDSOImage(&sections);
+
+#if SWIFT_OBJC_INTEROP && defined(__ELF__) && !defined(__APPLE__)
+  // HARMONY: hand this image's objc4-shaped ObjC sections to libobjc2
+  // (idempotent there, so a legacy hand-linked shim in the same image is
+  // harmless during migration).
+  if (&objc_load_swift_image_np != nullptr) {
+    objc_load_swift_image_np(
+        reinterpret_cast<const char **>(
+            const_cast<char *>(&__start_objc_selrefs)),
+        reinterpret_cast<const char **>(
+            const_cast<char *>(&__stop_objc_selrefs)),
+        reinterpret_cast<void **>(const_cast<char *>(&__start_objc_classlist)),
+        reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_classlist)));
+  }
+#endif
 }
 SWIFT_ALLOWED_RUNTIME_GLOBAL_CTOR_END
