@@ -40,6 +40,27 @@ struct HeapObject;
 // These functions are not available through public headers, but are guaranteed
 // to exist on OS X >= 10.9 and iOS >= 7.0.
 
+// HARMONY (slice 6h): OBJC_EXPORT comes from objc4's objc-api.h; libobjc2
+// ships an objc-api.h that does not define it. The declarations below are
+// objc4 SPI that Swift redeclares itself, and libobjc2 exports every one of
+// them (the objc-arc.h family), so the only gap is the macro. Pull
+// objc-arc.h too: it declares the parts of the ARC weak family that are
+// PUBLIC-header API on Darwin and so are not redeclared below
+// (objc_storeWeak). Darwin availability annotations degrade to no-ops.
+#if __has_include(<objc/objc-arc.h>)
+#  include <objc/objc-arc.h>
+#endif
+#ifndef OBJC_EXPORT
+#  if defined(__cplusplus)
+#    define OBJC_EXPORT extern "C"
+#  else
+#    define OBJC_EXPORT extern
+#  endif
+#endif
+#ifndef __OSX_AVAILABLE_STARTING
+#  define __OSX_AVAILABLE_STARTING(osx, ios)
+#endif
+
 OBJC_EXPORT id objc_retain(id);
 OBJC_EXPORT void objc_release(id);
 OBJC_EXPORT id _objc_rootAutorelease(id);

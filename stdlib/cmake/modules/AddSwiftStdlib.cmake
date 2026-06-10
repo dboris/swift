@@ -394,8 +394,16 @@ function(_add_target_variant_c_compile_flags)
     # option-A 5-word class head doubles as the objc4 layout Swift expects;
     # -fobjc-runtime is unused-argument noise on the .c/.cpp sources).
     list(APPEND result "-DSWIFT_OBJC_INTEROP=1")
+    # Two single-path cache vars (list separators do not survive
+    # build-script's --extra-cmake-options handling): libobjc2's include
+    # dir, and the CoreFoundation header dir (ErrorObject.h includes
+    # <CoreFoundation/CoreFoundation.h> -- served by the s-c-f CF headers,
+    # the same CF that is in-process at runtime on the Harmony stack).
     if(SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR)
       list(APPEND result "-I${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
+    endif()
+    if(SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR)
+      list(APPEND result "-I${SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR}")
     endif()
     list(APPEND result "-fblocks" "-fobjc-runtime=gnustep-3.0"
                        "-D__GNUSTEP_RUNTIME_ABI_30__"
