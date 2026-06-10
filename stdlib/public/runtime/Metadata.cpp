@@ -37,6 +37,10 @@
 #include "swift/Runtime/ExistentialContainer.h"
 #include "swift/Runtime/HeapObject.h"
 #include "swift/Runtime/Metadata.h"
+// HARMONY (slice 6i): for the objc4 SPI (re)declarations this file consults
+// via SWIFT_RUNTIME_WEAK_CHECK (_objc_realizeClassFromSwift,
+// objc_setHook_lazyClassNamer); on Darwin they arrive via objc-internal.h.
+#include "swift/Runtime/ObjCBridge.h"
 #include "swift/Runtime/Once.h"
 #include "swift/Runtime/Portability.h"
 #include "swift/Strings.h"

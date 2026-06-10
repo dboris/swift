@@ -92,6 +92,39 @@ OBJC_EXPORT Class objc_readClassPair(Class cls,
 // Magic symbol whose _address_ is the runtime's isa mask.
 OBJC_EXPORT const struct { char c; } objc_absolute_packed_isa_class_mask;
 
+// HARMONY (slice 6i): clang's gnustep codegen defines an ObjC class as
+// `._OBJC_CLASS_X` / `._OBJC_METACLASS_X` (the metaclass symbol TU-local),
+// while swiftc-emitted code references the objc4 names `OBJC_CLASS_$_X` /
+// `OBJC_METACLASS_$_X`.  For the runtime's own clang-compiled classes, alias
+// the objc4 names onto the gnustep definitions IN THE DEFINING TU -- the
+// proven 6c.4 technique (a linker --defsym would be an absolute, unrelocated
+// symbol, and the local metaclass is unreachable from other TUs anyway).
+#if !defined(__APPLE__)
+#define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)                                  \
+  __asm__(".globl \"OBJC_CLASS_$_" #name "\"\n"                                \
+          ".set \"OBJC_CLASS_$_" #name "\", ._OBJC_CLASS_" #name "\n"          \
+          ".globl \"OBJC_METACLASS_$_" #name "\"\n"                            \
+          ".set \"OBJC_METACLASS_$_" #name "\", ._OBJC_METACLASS_" #name "\n")
+#else
+#define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)
+#endif
+
+// HARMONY (slice 6i): objc4 SPI that the runtime consults through
+// SWIFT_RUNTIME_WEAK_CHECK and that libobjc2 does not provide.  Off-Darwin,
+// declare them weak: ELF resolves unsatisfied weak references to null, so
+// the checks fail cleanly and select the eager fallbacks
+// (swift_instantiateObjCClass instead of stub realization; eager
+// generic-class naming instead of the lazy-namer hook) -- the same paths
+// these call sites take on pre-2018 objc4.
+#if !defined(__APPLE__)
+OBJC_EXPORT __attribute__((weak)) Class _Nullable
+_objc_realizeClassFromSwift(Class _Nullable cls, void *_Nullable previously);
+typedef const char *_Nullable (*objc_hook_lazyClassNamer)(Class _Nonnull cls);
+OBJC_EXPORT __attribute__((weak)) void
+objc_setHook_lazyClassNamer(objc_hook_lazyClassNamer _Nonnull newValue,
+                            objc_hook_lazyClassNamer _Nullable *_Nonnull outOldValue);
+#endif
+
 
 namespace swift {
 
