@@ -216,14 +216,6 @@ public func _bridgeAnythingToObjectiveC<T>(_ x: T) -> AnyObject {
 public // @testable
 func _bridgeAnythingNonVerbatimToObjectiveC<T>(_ x: __owned T) -> AnyObject
 
-// HARMONY (slice 6e): close the _runtime(_ObjC) region so _bridgeAnyObjectToAny
-// is ALSO defined on the native runtime. With -enable-objc-interop, every
-// imported `id` RETURN value lowers through this intrinsic
-// (SILGenBridging emitCBridgedToNativeValue -> emitApplyOfLibraryIntrinsic);
-// without it the frontend aborts (SILDeclRef on a null FuncDecl) on any
-// id-returning ObjC call. The body is pure Swift and runtime-agnostic.
-#endif
-
 /// Convert a purportedly-nonnull `id` value from Objective-C into an Any.
 ///
 /// Since Objective-C APIs sometimes get their nullability annotations wrong,
@@ -237,10 +229,6 @@ public func _bridgeAnyObjectToAny(_ possiblyNullObject: AnyObject?) -> Any {
   }
   return possiblyNullObject as Any
 }
-
-// HARMONY (slice 6e): reopen the _runtime(_ObjC) region (closed above to give
-// the native runtime _bridgeAnyObjectToAny).
-#if _runtime(_ObjC)
 
 /// Convert `x` from its Objective-C representation to its Swift
 /// representation.
@@ -392,18 +380,6 @@ public func _getBridgedObjectiveCType<T>(_: T.Type) -> Any.Type? {
 
 @_silgen_name("")
 public func _getBridgedNonVerbatimObjectiveCType<T>(_: T.Type) -> Any.Type?
-
-// HARMONY (slice 6e): close the _runtime(_ObjC) region so the pointer-argument
-// bridging type below is ALSO defined on the native runtime. The frontend's
-// ASTContext::hasPointerArgumentIntrinsics requires
-// AutoreleasingUnsafeMutablePointer whenever -enable-objc-interop is set --
-// Harmony runs the interop frontend over the native-runtime stdlib (libobjc2
-// is the ObjC runtime; Swift's own runtime stays native), so without this the
-// implicit String/inout/array -> pointer argument conversions are rejected
-// ("broken standard library"). The @_transparent accessors inline into user
-// code, where Builtin.autorelease lowers to objc_autorelease and resolves
-// against libobjc2.
-#endif
 
 // -- Pointer argument bridging
 
@@ -617,10 +593,6 @@ extension UnsafeRawPointer {
 
 @available(*, unavailable)
 extension AutoreleasingUnsafeMutablePointer: Sendable { }
-
-// HARMONY (slice 6e): reopen the _runtime(_ObjC) region (closed above to give
-// the native runtime AutoreleasingUnsafeMutablePointer).
-#if _runtime(_ObjC)
 
 @unsafe
 internal struct _CocoaFastEnumerationStackBuf {
