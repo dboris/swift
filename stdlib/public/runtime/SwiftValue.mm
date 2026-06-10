@@ -261,6 +261,24 @@ static constexpr size_t getSwiftValuePayloadOffset(size_t alignMask) {
          ~alignMask;
 }
 
+// HARMONY: libobjc2 keeps an object's slow-path retain count in a hidden
+// word at obj[-1] (objc_retain_fast_np / NSExtraRefCount; the runtime's
+// own allocator reserves it in class_createInstance).  __SwiftValue
+// allocates its own memory, so reserve one alignment unit in front and
+// place the instance past it -- otherwise every retain/release writes
+// into the enclosing malloc chunk's header and the box can never reach
+// retain-count zero (it leaks, with the header corrupted while retained).
+// A zeroed prefix means extra-refcount 0 == retain count 1, matching a
+// freshly calloc'd class_createInstance object.  Darwin reserves nothing
+// (objc4 refcounts via isa bits / side tables).
+static constexpr size_t getSwiftValueInstancePrefix(size_t alignMask) {
+#if defined(__APPLE__)
+  return 0;
+#else
+  return alignMask + 1;
+#endif
+}
+
 static SwiftValueHeader *getSwiftValueHeader(__SwiftValue *v) {
   auto instanceBytes = reinterpret_cast<char *>(v);
   return reinterpret_cast<SwiftValueHeader *>(instanceBytes +
@@ -296,7 +314,14 @@ __SwiftValue *swift::bridgeAnythingToSwiftValueObject(OpaqueValue *src,
   size_t totalSize =
       getSwiftValuePayloadOffset(alignMask) + srcType->getValueWitnesses()->size;
 
-  void *instanceMemory = swift_slowAlloc(totalSize, alignMask);
+  size_t prefix = getSwiftValueInstancePrefix(alignMask);
+  void *allocation = swift_slowAlloc(totalSize + prefix, alignMask);
+  void *instanceMemory = reinterpret_cast<char *>(allocation) + prefix;
+  if (prefix > 0) {
+    // The hidden retain-count word must start at zero (swift_slowAlloc
+    // memory is not).
+    reinterpret_cast<uintptr_t *>(instanceMemory)[-1] = 0;
+  }
   __SwiftValue *instance
     = objc_constructInstance(getSwiftValueClass(), instanceMemory);
   /* TODO: If we're able to become a SwiftObject subclass in the future,
@@ -391,11 +416,14 @@ swift::findSwiftValueConformances(const ExistentialTypeMetadata *existentialType
   getSwiftValueHeader(self)->~SwiftValueHeader();
   instanceType->vw_destroy(getSwiftValuePayload(self, alignMask));
 
-  // Deallocate ourselves.
+  // Deallocate ourselves (including the hidden-word prefix, see
+  // getSwiftValueInstancePrefix).
   objc_destructInstance(self);
   auto totalSize = getSwiftValuePayloadOffset(alignMask) +
                    instanceType->getValueWitnesses()->size;
-  swift_slowDealloc(self, totalSize, alignMask);
+  size_t prefix = getSwiftValueInstancePrefix(alignMask);
+  swift_slowDealloc(reinterpret_cast<char *>(self) - prefix,
+                    totalSize + prefix, alignMask);
 }
 #pragma clang diagnostic pop
 
