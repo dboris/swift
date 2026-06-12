@@ -95,6 +95,16 @@ DECLARE_OBJC_SECTION(objc_selrefs)
 DECLARE_OBJC_SECTION(objc_classlist)
 DECLARE_OBJC_SECTION(objc_classrefs)
 DECLARE_OBJC_SECTION(objc_superrefs)
+// HARMONY (W3B): the SELF-DESCRIBING class anchors IRGen defines for
+// clang-imported external ObjC classes (GenDecl.cpp
+// getAddrOfHarmonyPEObjCClassAnchor): each is a one-word constant whose
+// content points at the class's runtime NAME.  The constructor below
+// resolves any fixup-walk word that points into these ranges through
+// objc_lookUpClass(name) -- the GENERAL arm of the anchor design; the
+// fixed 8-root table below covers the Swift-DEFINED runtime roots that
+// IRGen cannot anchor (no clang node).
+DECLARE_OBJC_SECTION(hmny_canchor)
+DECLARE_OBJC_SECTION(hmny_manchor)
 }
 #undef DECLARE_OBJC_SECTION
 
@@ -265,6 +275,32 @@ static void swift_image_constructor() {
           canonicalClass[i] = cls;
           canonical[i] = *reinterpret_cast<void **>(cls); // word 0: isa
         }
+      // HARMONY (W3B): the GENERAL anchors -- IRGen-defined per-image
+      // symbols for clang-imported classes, self-describing (the anchor
+      // word points at the runtime name).  A hit in .hmny_canchor
+      // resolves to the class object; a hit in .hmny_manchor to its
+      // metaclass (class word 0).  Returns null for non-anchor pointers
+      // and for classes not yet registered (the latter would be a
+      // dependency-order bug -- the slot then keeps the anchor address
+      // and faults loudly at first dispatch rather than silently).
+      const char *canchorBegin =
+          reinterpret_cast<const char *>(&__start_hmny_canchor + 1);
+      const char *canchorEnd =
+          reinterpret_cast<const char *>(&__stop_hmny_canchor);
+      const char *manchorBegin =
+          reinterpret_cast<const char *>(&__start_hmny_manchor + 1);
+      const char *manchorEnd =
+          reinterpret_cast<const char *>(&__stop_hmny_manchor);
+      auto resolveNamedAnchor = [&](void *p) -> void * {
+        const char *cp = reinterpret_cast<const char *>(p);
+        if (cp >= canchorBegin && cp < canchorEnd)
+          return getClass(*reinterpret_cast<const char *const *>(cp));
+        if (cp >= manchorBegin && cp < manchorEnd)
+          if (void *cls =
+                  getClass(*reinterpret_cast<const char *const *>(cp)))
+            return *reinterpret_cast<void **>(cls); // word 0: metaclass
+        return nullptr;
+      };
       for (void **c = classlistBegin; c < classlistEnd; ++c) {
         if (!*c)
           continue;
@@ -274,13 +310,18 @@ static void swift_image_constructor() {
         for (int i = 0; i < anchorCount; ++i)
           if (cls[1] == classAnchors[i].anchor && canonicalClass[i])
             cls[1] = canonicalClass[i];
+        if (void *r = resolveNamedAnchor(cls[1]))
+          cls[1] = r;
         void **meta = reinterpret_cast<void **>(cls[0]); // class isa
         if (!meta)
           continue;
-        for (int w = 0; w < 2; ++w) // metaclass isa + superclass
+        for (int w = 0; w < 2; ++w) { // metaclass isa + superclass
           for (int i = 0; i < anchorCount; ++i)
             if (meta[w] == anchors[i].anchor && canonical[i])
               meta[w] = canonical[i];
+          if (void *r = resolveNamedAnchor(meta[w]))
+            meta[w] = r;
+        }
       }
       // Eager reference slots: classrefs hold class objects, superrefs
       // (super-send targets) hold class objects too on this stack.
@@ -293,13 +334,16 @@ static void swift_image_constructor() {
            reinterpret_cast<void **>(&__stop_objc_superrefs)},
       };
       for (const auto &range : refRanges)
-        for (void **slot = range.begin; slot < range.end; ++slot)
+        for (void **slot = range.begin; slot < range.end; ++slot) {
           for (int i = 0; i < anchorCount; ++i) {
             if (*slot == classAnchors[i].anchor && canonicalClass[i])
               *slot = canonicalClass[i];
             else if (*slot == anchors[i].anchor && canonical[i])
               *slot = canonical[i];
           }
+          if (void *r = resolveNamedAnchor(*slot))
+            *slot = r;
+        }
     }
 
     if (auto loadImage = reinterpret_cast<objc_load_swift_image_fn>(

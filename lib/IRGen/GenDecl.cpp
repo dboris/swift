@@ -4914,11 +4914,71 @@ Address IRGenModule::getAddrOfObjCClassRef(ClassDecl *theClass) {
 
 /// Fetch a global reference to the given Objective-C class.  The
 /// result is of type ObjCClassPtrTy.
+// HARMONY (W3B): on COFF under ObjC interop over libobjc2, a Swift image
+// cannot link a reference to an external clang-imported ObjC class
+// object: clang's gnustep emission names it $_OBJC_CLASS_X while Swift
+// references the objc4 spelling OBJC_CLASS_$_X, and no import-library
+// arrangement helps -- PE fixes up static-initializer data relocations
+// INTRA-module only (the W2/W3 anchor constraint), so a .objc_classrefs
+// slot can never hold another DLL's address at link time.  Instead,
+// DEFINE the objc4-spelled symbol per image as a SELF-DESCRIBING ANCHOR:
+// a linkonce_odr constant whose single word points at the class's
+// runtime NAME, grouped in .hmny_canchor$B / .hmny_manchor$B between
+// swiftrt.obj's $A/$C bookends.  The swiftrt image constructor
+// (SwiftRT-COFF.cpp, .CRT$XCIS) rewrites every classlist/classref/
+// superref word that points into those ranges to the canonical object
+// found via objc_lookUpClass(name) -- the PE analog of a dyld bind.
+// Swift-DEFINED classes never come through here (no clang node): their
+// objc4 roots keep the fixed 8-entry /alternatename anchor table in
+// SwiftRT-COFF.cpp, and where the two meet (NSObject is clang-imported)
+// the defined anchor simply makes that /alternatename dormant by PE
+// semantics (the directive only fires for undefined symbols).
+static llvm::Constant *
+getAddrOfHarmonyPEObjCClassAnchor(IRGenModule &IGM, ClassDecl *theClass,
+                                  bool isMetaclass) {
+  llvm::SmallString<64> nameBuf;
+  StringRef runtimeName = theClass->getObjCRuntimeName(nameBuf);
+  std::string symbol =
+      ((isMetaclass ? "OBJC_METACLASS_$_" : "OBJC_CLASS_$_") + runtimeName)
+          .str();
+
+  auto *nameStr = IGM.getAddrOfGlobalString(runtimeName);
+  auto *anchorTy = llvm::StructType::get(IGM.getLLVMContext(),
+                                         {IGM.Int8PtrTy}, /*packed=*/false);
+  auto *init = llvm::ConstantStruct::get(anchorTy, {nameStr});
+  // NOT isConstant: lld-link keys OUTPUT sections by (name, permissions),
+  // and swiftrt.obj's $A/$C bookends are read-write -- a read-only anchor
+  // would land in a SECOND same-named section OUTSIDE the bookend range,
+  // invisible to the constructor's resolver (found the hard way: gate 5's
+  // first run crashed dispatching on an unresolved anchor).
+  auto *gv = new llvm::GlobalVariable(
+      IGM.Module, anchorTy, /*isConstant=*/false,
+      llvm::GlobalValue::LinkOnceODRLinkage, init, symbol);
+  gv->setComdat(IGM.Module.getOrInsertComdat(gv->getName()));
+  gv->setSection(isMetaclass ? ".hmny_manchor$B" : ".hmny_canchor$B");
+  gv->setAlignment(llvm::MaybeAlign(IGM.getPointerAlignment().getValue()));
+  return gv;
+}
+
+static bool isHarmonyPEObjCClassAnchorCase(IRGenModule &IGM,
+                                           ClassDecl *theClass,
+                                           ForDefinition_t forDefinition) {
+  return IGM.TargetInfo.OutputObjectFormat == llvm::Triple::COFF &&
+         IGM.ObjCInterop && !forDefinition && theClass->hasClangNode();
+}
+
 llvm::Constant *IRGenModule::getAddrOfObjCClass(ClassDecl *theClass,
                                                 ForDefinition_t forDefinition) {
   assert(ObjCInterop && "getting address of ObjC class in no-interop mode");
   assert(!theClass->isForeign());
   LinkEntity entity = LinkEntity::forObjCClass(theClass);
+  if (isHarmonyPEObjCClassAnchorCase(*this, theClass, forDefinition)) {
+    auto &entry = GlobalVars[entity];
+    if (!entry)
+      entry = getAddrOfHarmonyPEObjCClassAnchor(*this, theClass,
+                                                /*isMetaclass=*/false);
+    return entry;
+  }
   auto DbgTy = DebugTypeInfo::getObjCClass(theClass, getPointerSize(),
                                            getPointerAlignment());
   auto addr = getAddrOfLLVMVariable(entity, forDefinition, DbgTy);
@@ -4938,6 +4998,19 @@ IRGenModule::getAddrOfMetaclassObject(ClassDecl *decl,
   auto entity = decl->getMetaclassKind() == ClassDecl::MetaclassKind::ObjC
                     ? LinkEntity::forObjCMetaclass(decl)
                     : LinkEntity::forSwiftMetaclassStub(decl);
+
+  // HARMONY (W3B): the metaclass flavor of the self-describing PE anchor
+  // (see getAddrOfObjCClass above); the swiftrt resolver answers the
+  // canonical METACLASS (looked-up class object's word 0) for hits in
+  // .hmny_manchor.
+  if (decl->getMetaclassKind() == ClassDecl::MetaclassKind::ObjC &&
+      isHarmonyPEObjCClassAnchorCase(*this, decl, forDefinition)) {
+    auto &entry = GlobalVars[entity];
+    if (!entry)
+      entry = getAddrOfHarmonyPEObjCClassAnchor(*this, decl,
+                                                /*isMetaclass=*/true);
+    return entry;
+  }
 
   auto DbgTy = DebugTypeInfo::getObjCClass(decl, getPointerSize(),
                                            getPointerAlignment());
