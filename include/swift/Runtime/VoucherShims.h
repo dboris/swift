@@ -37,8 +37,16 @@
 // HARMONY (W3): "ObjC interop" no longer implies Darwin -- on the gnustep
 // stack there is no voucher SPI (and this stack's <os/object.h> is
 // WinCatalyst's WOCStdLib shim, which has no OS_OBJECT_DECL_CLASS).
-// Windows-gated so the Linux interop build is byte-identical.
-#if (SWIFT_HAS_VOUCHER_HEADER || (SWIFT_OBJC_INTEROP && !defined(_WIN32))) && \
+// W3 gated Windows only (keeping the Linux interop build byte-identical
+// mid-slice); W4 completes it: vouchers exist only where the Darwin
+// voucher SPI does, so the interop arm requires __APPLE__. Without this
+// the LINUX interop libswift_Concurrency.so imports voucher_copy/
+// voucher_adopt/os_release that no libdispatch on the stack exports --
+// every bare `swiftc hello.swift` link (and CMake's
+// enable_language(Swift) sanity link) dies on them; the harmony gates
+// only dodged it via their explicit link arrays. Windows is
+// preprocessed-identical under the new condition (false -> false).
+#if (SWIFT_HAS_VOUCHER_HEADER || (SWIFT_OBJC_INTEROP && defined(__APPLE__))) && \
     !SWIFT_THREADING_NONE
 #define SWIFT_HAS_VOUCHERS 1
 #endif
