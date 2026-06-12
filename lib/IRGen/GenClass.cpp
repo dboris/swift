@@ -1488,7 +1488,17 @@ namespace {
       // };
 
       assert(fields.getNextOffsetFromGlobal() == size);
-      return buildGlobalVariable(fields, "_CATEGORY_", /*const*/ true,
+      // HARMONY (W4.4): non-constant on COFF -- PE cannot statically
+      // initialize the class word with another DLL's class object, so it
+      // holds a per-image anchor that swiftrt's constructor REWRITES to
+      // the canonical class before registration
+      // (objc_load_swift_image_categories_np).  A constant global lands
+      // in .rdata and the fixup write faults (the wall-28 family: the
+      // same reason the self-describing anchors are emitted non-constant).
+      // Mach-O/ELF emission is unchanged (dyld/ld.so bind the word; no
+      // runtime write).
+      bool isConst = IGM.TargetInfo.OutputObjectFormat != llvm::Triple::COFF;
+      return buildGlobalVariable(fields, "_CATEGORY_", isConst,
                                  internalLinkage);
     }
     
