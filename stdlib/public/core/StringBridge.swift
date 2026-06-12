@@ -607,12 +607,23 @@ private func _createCFString(
   _ count: Int,
   _ encoding: UInt32
 ) -> AnyObject? {
+#if canImport(Darwin)
   return unsafe _createNSString(
     unsafeBitCast(__StringStorage.self as AnyClass, to: _StringSelectorHolder.self),
     ptr,
     count,
     encoding
   )
+#else
+  // HARMONY (W5): newTaggedNSStringWithASCIIBytes_:length_: is Darwin CF
+  // SPI -- nothing on the gnustep stack implements it, and the blind
+  // class-message died in forwarding the first time a small-ASCII string
+  // bridged (the NSError domain, gate-5 leg 11).  Returning nil takes the
+  // call site's DESIGNED fallthrough (__StringStorage.create).  The
+  // indirect-tagged path needs no twin gate: its runtime helper looks the
+  // provider class up and already returns null when absent.
+  return nil
+#endif
 }
 
 #if !$Embedded
