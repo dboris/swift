@@ -95,6 +95,12 @@ DECLARE_OBJC_SECTION(objc_selrefs)
 DECLARE_OBJC_SECTION(objc_classlist)
 DECLARE_OBJC_SECTION(objc_classrefs)
 DECLARE_OBJC_SECTION(objc_superrefs)
+// W4.4: objc4 category_t records (@objc extension members on imported /
+// other-module classes), invisible to ObjC sends until registered.  Each
+// record's class word is an EAGER class-object pointer -- the same
+// per-image anchor problem as classrefs; the constructor canonicalizes
+// it before handing the list to libobjc2.
+DECLARE_OBJC_SECTION(objc_catlist)
 // HARMONY (W3B): the SELF-DESCRIBING class anchors IRGen defines for
 // clang-imported external ObjC classes (GenDecl.cpp
 // getAddrOfHarmonyPEObjCClassAnchor): each is a one-word constant whose
@@ -224,11 +230,14 @@ static void swift_image_constructor() {
   // exactly like SWIFT_SECTION_RANGE does for the swift5 sections.
   using objc_load_swift_image_fn = void (*)(const char **, const char **,
                                             void **, void **);
+  using objc_load_swift_categories_fn = void (*)(void **, void **);
   using objc_get_class_fn = void *(*)(const char *);
   if (HMODULE objcModule = GetModuleHandleW(L"objc")) {
     void **classlistBegin =
         reinterpret_cast<void **>(&__start_objc_classlist + 1);
     void **classlistEnd = reinterpret_cast<void **>(&__stop_objc_classlist);
+    void **catlistBegin = reinterpret_cast<void **>(&__start_objc_catlist + 1);
+    void **catlistEnd = reinterpret_cast<void **>(&__stop_objc_catlist);
 
     // Metaclass-chain fixup BEFORE registration: rewrite isa/superclass
     // words of this image's metaclasses that point at the local link
@@ -344,6 +353,20 @@ static void swift_image_constructor() {
           if (void *r = resolveNamedAnchor(*slot))
             *slot = r;
         }
+      // W4.4: category records -- canonicalize each category_t's class
+      // word (word 1: an eager class-object pointer, exactly the
+      // classrefs problem) before the registration call below hands the
+      // list to libobjc2; libobjc2 reads the class's NAME through it.
+      for (void **entry = catlistBegin; entry < catlistEnd; ++entry) {
+        if (!*entry)
+          continue;
+        void **cat = reinterpret_cast<void **>(*entry);
+        for (int i = 0; i < anchorCount; ++i)
+          if (cat[1] == classAnchors[i].anchor && canonicalClass[i])
+            cat[1] = canonicalClass[i];
+        if (void *r = resolveNamedAnchor(cat[1]))
+          cat[1] = r;
+      }
     }
 
     if (auto loadImage = reinterpret_cast<objc_load_swift_image_fn>(
@@ -352,6 +375,17 @@ static void swift_image_constructor() {
       loadImage(reinterpret_cast<const char **>(&__start_objc_selrefs + 1),
                 reinterpret_cast<const char **>(&__stop_objc_selrefs),
                 classlistBegin, classlistEnd);
+    }
+    // W4.4: register this image's Swift-emitted categories AFTER its
+    // classes.  A separate probed entry point (not new parameters on the
+    // one above): PE has no symbol versioning, and an absent probe on an
+    // older objc.dll leaves the categories dormant -- the gate's category
+    // leg catches the staleness loudly -- instead of silently mis-passing
+    // arguments.
+    if (auto loadCategories = reinterpret_cast<objc_load_swift_categories_fn>(
+            reinterpret_cast<void *>(GetProcAddress(
+                objcModule, "objc_load_swift_image_categories_np")))) {
+      loadCategories(catlistBegin, catlistEnd);
     }
   }
 #endif
