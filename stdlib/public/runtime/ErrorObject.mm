@@ -98,6 +98,30 @@ __attribute__((objc_root_class))
 
 @implementation __SwiftNativeNSError
 
+#if !defined(__APPLE__)
+// HARMONY (W5 follow-up): [super ...] on the gnustep emission resolves
+// through the COMPILE-TIME superclass -- the layout standin above, which
+// has no NSObject surface (its contract is layout-only).  The runtime
+// reparents this class onto the real NSError at first use
+// (class_setSuperclass), and every NORMAL send already follows the live
+// chain (dtables build post-swap) -- only static super-sends bypass it:
+// [super dealloc] aborted in unrecognized-selector forwarding the first
+// time a box was ever DEALLOCATED (the gates' boxes were all globals
+// until the localizedDescription convenience made a temporary).
+// Dispatch supers through the LIVE superclass instead.
+static inline IMP liveSuperIMP(id self, SEL sel) {
+  Class sup = class_getSuperclass(object_getClass(self));
+  return class_getMethodImplementation(sup, sel);
+}
+static BOOL liveSuperIsEqual(id self, id other) {
+  SEL sel = @selector(isEqual:);
+  return ((BOOL (*)(id, SEL, id))liveSuperIMP(self, sel))(self, sel, other);
+}
+#define SWIFT_NSERROR_SUPER_ISEQUAL(other) liveSuperIsEqual(self, other)
+#else
+#define SWIFT_NSERROR_SUPER_ISEQUAL(other) [super isEqual:other]
+#endif
+
 + (instancetype)allocWithZone:(NSZone *)zone {
   (void)zone;
   swift::crash("__SwiftNativeNSError cannot be instantiated");
@@ -108,7 +132,15 @@ __attribute__((objc_root_class))
   auto error = (SwiftError*)self;
   error->getType()->vw_destroy(error->getValue());
 
+#if defined(__APPLE__)
   [super dealloc];
+#else
+  // The live-superclass super-send (see liveSuperIMP above): NSError's
+  // chain runs the ivar destruction against the layout-coincident
+  // domain/code/userInfo fields, then NSObject frees the instance.
+  SEL deallocSel = @selector(dealloc);
+  ((void (*)(id, SEL))liveSuperIMP(self, deallocSel))(self, deallocSel);
+#endif
 }
 
 // Override the domain/code/userInfo accessors to follow our idea of NSError's
@@ -191,17 +223,17 @@ __attribute__((objc_root_class))
   }
 
   if (other_->isPureNSError()) {
-    return [super isEqual:other];
+    return SWIFT_NSERROR_SUPER_ISEQUAL(other);
   }
 
   auto hashableBaseType = self_->getHashableBaseType();
   if (!hashableBaseType || other_->getHashableBaseType() != hashableBaseType) {
-    return [super isEqual:other];
+    return SWIFT_NSERROR_SUPER_ISEQUAL(other);
   }
 
   auto hashableConformance = self_->getHashableConformance();
   if (!hashableConformance) {
-    return [super isEqual:other];
+    return SWIFT_NSERROR_SUPER_ISEQUAL(other);
   }
 
   return _swift_stdlib_Hashable_isEqual_indirect(
@@ -274,7 +306,10 @@ static Class getSwiftNativeNSErrorClass() {
 }
 
 static id getEmptyNSDictionary() {
-  return [objc_lookUpClass("NSDictionary") dictionary];
+  // HARMONY (W5 follow-up): +1 -- the lazy constant CACHES this object
+  // for the process lifetime, and on this stack [NSDictionary dictionary]
+  // is an autoreleased real heap object, not an immortal CF singleton.
+  return objc_retain([objc_lookUpClass("NSDictionary") dictionary]);
 }
 
 /// Allocate a catchable error object.
@@ -560,8 +595,12 @@ swift::_swift_stdlib_bridgeErrorToNSError(SwiftError *errorObject) {
   id userInfo = getErrorUserInfoNSDictionary(value, type, witness);
 
   // Never produce an empty userInfo dictionary.
+  // HARMONY (W5 follow-up): the userInfo slot owns a +1 PER BOX (the
+  // box's death releases it through NSError's layout-coincident ivar
+  // destruction), so each use retains the cached shared instance --
+  // without this the first box death over-releases the cache.
   if (!userInfo)
-    userInfo = SWIFT_LAZY_CONSTANT(getEmptyNSDictionary());
+    userInfo = objc_retain(SWIFT_LAZY_CONSTANT(getEmptyNSDictionary()));
 
   // The error code shouldn't change, so we can store it blindly, even if
   // somebody beat us to it. The store can be relaxed, since we'll do a
