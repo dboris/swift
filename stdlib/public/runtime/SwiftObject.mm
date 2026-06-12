@@ -305,6 +305,23 @@ static id _getClassDescription(Class cls) {
 #endif
 }
 
+#if !defined(__APPLE__)
+// HARMONY (W5 follow-up): NSObject's -copy/-mutableCopy conveniences.
+// Off-Darwin SwiftObject IS the root (no NSObject superclass supplies
+// them), and Cocoa collection key paths send -copy ([key copy] inside
+// setObject:forKey:) -- without the convenience an NSCopying-conforming
+// subclass (__SwiftValue, the non-verbatim bridged key) died in
+// unrecognized-selector forwarding.  Apple shape exactly: blind-call the
+// WithZone: primitive; a class without it stays loudly unrecognized,
+// just as on Darwin.
+- (id)copy {
+  return [(id)self copyWithZone:nullptr];
+}
+- (id)mutableCopy {
+  return [(id)self mutableCopyWithZone:nullptr];
+}
+#endif
+
 - (void)doesNotRecognizeSelector: (SEL) sel {
   Class cls = _swift_getObjCClassOfAllocated(self);
   fatalError(/* flags = */ 0,
