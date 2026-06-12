@@ -93,6 +93,8 @@ DECLARE_SWIFT_SECTION(sw5test)
 extern "C" {
 DECLARE_OBJC_SECTION(objc_selrefs)
 DECLARE_OBJC_SECTION(objc_classlist)
+DECLARE_OBJC_SECTION(objc_classrefs)
+DECLARE_OBJC_SECTION(objc_superrefs)
 }
 #undef DECLARE_OBJC_SECTION
 
@@ -134,6 +136,31 @@ HARMONY_METACLASS_ANCHOR("__SwiftNativeNSSetBase", NSSetBase);
 HARMONY_METACLASS_ANCHOR("__SwiftNativeNSStringBase", NSStringBase);
 HARMONY_METACLASS_ANCHOR("__SwiftNativeNSEnumeratorBase", NSEnumeratorBase);
 #undef HARMONY_METACLASS_ANCHOR
+
+// And the CLASS objects, for EAGER references: .objc_classrefs /
+// .objc_superrefs entries (objc_msgSend receivers, super sends) are
+// load-time pointers to class objects that may live in another DLL --
+// the wall-12 family ("gate 3's eager NSObject classref").  Same anchor
+// scheme; the constructor rewrites anchor-pointing REF SLOTS to the
+// canonical class object by name.  (Stub-class superclass references
+// need none of this: resilient Swift metadata resolves them by mangled
+// name at instantiation.)
+#define HARMONY_CLASS_ANCHOR(sym, cls)                                         \
+  extern "C" __declspec(align(64)) char                                        \
+      _swift_harmony_c_anchor_##cls[64] = {0};                                 \
+  __pragma(comment(linker, "/alternatename:OBJC_CLASS_$_" sym                  \
+                           "=_swift_harmony_c_anchor_" #cls))                  \
+  static_assert(true, "swallow the call-site semicolon")
+
+HARMONY_CLASS_ANCHOR("_TtCs12_SwiftObject", SwiftObject);
+HARMONY_CLASS_ANCHOR("NSObject", NSObject);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSArrayBase", NSArrayBase);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSMutableArrayBase", NSMutableArrayBase);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSDictionaryBase", NSDictionaryBase);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSSetBase", NSSetBase);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSStringBase", NSStringBase);
+HARMONY_CLASS_ANCHOR("__SwiftNativeNSEnumeratorBase", NSEnumeratorBase);
+#undef HARMONY_CLASS_ANCHOR
 
 namespace {
 struct HarmonyMetaclassAnchor {
@@ -217,15 +244,36 @@ static void swift_image_constructor() {
           {"__SwiftNativeNSEnumeratorBase",
            _swift_harmony_mc_anchor_NSEnumeratorBase},
       };
+      const HarmonyMetaclassAnchor classAnchors[] = {
+          {"_TtCs12_SwiftObject", _swift_harmony_c_anchor_SwiftObject},
+          {"NSObject", _swift_harmony_c_anchor_NSObject},
+          {"__SwiftNativeNSArrayBase", _swift_harmony_c_anchor_NSArrayBase},
+          {"__SwiftNativeNSMutableArrayBase",
+           _swift_harmony_c_anchor_NSMutableArrayBase},
+          {"__SwiftNativeNSDictionaryBase",
+           _swift_harmony_c_anchor_NSDictionaryBase},
+          {"__SwiftNativeNSSetBase", _swift_harmony_c_anchor_NSSetBase},
+          {"__SwiftNativeNSStringBase", _swift_harmony_c_anchor_NSStringBase},
+          {"__SwiftNativeNSEnumeratorBase",
+           _swift_harmony_c_anchor_NSEnumeratorBase},
+      };
       const int anchorCount = sizeof(anchors) / sizeof(anchors[0]);
+      void *canonicalClass[anchorCount] = {};
       void *canonical[anchorCount] = {};
       for (int i = 0; i < anchorCount; ++i)
-        if (void *cls = getClass(anchors[i].className))
+        if (void *cls = getClass(anchors[i].className)) {
+          canonicalClass[i] = cls;
           canonical[i] = *reinterpret_cast<void **>(cls); // word 0: isa
+        }
       for (void **c = classlistBegin; c < classlistEnd; ++c) {
         if (!*c)
           continue;
         void **cls = reinterpret_cast<void **>(*c);
+        // The class's own superclass word may be an eager class-object
+        // reference (clang-emitted classes; Swift stubs resolve by name).
+        for (int i = 0; i < anchorCount; ++i)
+          if (cls[1] == classAnchors[i].anchor && canonicalClass[i])
+            cls[1] = canonicalClass[i];
         void **meta = reinterpret_cast<void **>(cls[0]); // class isa
         if (!meta)
           continue;
@@ -234,6 +282,24 @@ static void swift_image_constructor() {
             if (meta[w] == anchors[i].anchor && canonical[i])
               meta[w] = canonical[i];
       }
+      // Eager reference slots: classrefs hold class objects, superrefs
+      // (super-send targets) hold class objects too on this stack.
+      struct RefRange {
+        void **begin, **end;
+      } refRanges[] = {
+          {reinterpret_cast<void **>(&__start_objc_classrefs + 1),
+           reinterpret_cast<void **>(&__stop_objc_classrefs)},
+          {reinterpret_cast<void **>(&__start_objc_superrefs + 1),
+           reinterpret_cast<void **>(&__stop_objc_superrefs)},
+      };
+      for (const auto &range : refRanges)
+        for (void **slot = range.begin; slot < range.end; ++slot)
+          for (int i = 0; i < anchorCount; ++i) {
+            if (*slot == classAnchors[i].anchor && canonicalClass[i])
+              *slot = canonicalClass[i];
+            else if (*slot == anchors[i].anchor && canonical[i])
+              *slot = canonical[i];
+          }
     }
 
     if (auto loadImage = reinterpret_cast<objc_load_swift_image_fn>(
