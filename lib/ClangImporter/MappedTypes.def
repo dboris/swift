@@ -168,6 +168,20 @@ MAP_STDLIB_TYPE("CFOptionFlags", UnsignedWord, 0, "UInt", false, DefineAndUse)
 MAP_STDLIB_TYPE("CFHashCode", UnsignedWord, 0, "UInt", false, DefineAndUse)
 MAP_STDLIB_TYPE("CFIndex", SignedWord, 0, "Int", false, DefineAndUse)
 
+// HARMONY (W3): the SwiftShims CF/NS width typedefs must import as
+// Int/UInt the way their CF originals do.  On LP64 the plain long
+// spellings already imported that way (the long==word rule); on LLP64
+// (Win64) the underlying type is long long, which imports as
+// Int64/UInt64 -- a DISTINCT type -- and every _runtime(_ObjC) stdlib
+// use site fails to typecheck.  Word kinds keep the width check;
+// Darwin/Linux behavior is unchanged.
+MAP_STDLIB_TYPE("_swift_shims_CFHashCode", UnsignedWord, 0, "UInt", false,
+                DefineAndUse)
+MAP_STDLIB_TYPE("_swift_shims_CFIndex", SignedWord, 0, "Int", false,
+                DefineAndUse)
+MAP_STDLIB_TYPE("_swift_shims_NSUInteger", UnsignedWord, 0, "UInt", false,
+                DefineAndUse)
+
 // Foundation types.
 // FIXME: <rdar://problem/16074941> NSStringEncoding doesn't work on 32-bit
 MAP_STDLIB_TYPE("NSStringEncoding", UnsignedWord, 0, "UInt", false, DoNothing)

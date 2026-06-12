@@ -99,7 +99,21 @@ OBJC_EXPORT const struct { char c; } objc_absolute_packed_isa_class_mask;
 // the objc4 names onto the gnustep definitions IN THE DEFINING TU -- the
 // proven 6c.4 technique (a linker --defsym would be an absolute, unrelocated
 // symbol, and the local metaclass is unreachable from other TUs anyway).
-#if !defined(__APPLE__)
+#if defined(_WIN32)
+// HARMONY (W3): the COFF arm -- the W2 /alternatename pattern; gnustep-3.0
+// class objects are $-prefixed on COFF (llvm-nm verified in spike-16) and
+// .set is ELF-only (it assembled silently to garbage in W2 wall 6).
+// NO metaclass alternatename here: SwiftRT-COFF.cpp maps the objc4
+// metaclass names onto per-image link anchors (one alternatename per
+// symbol per link -- two targets is an lld hard error), and its image
+// constructor rewrites anchor-pointing metaclass words through the
+// runtime.  The class-object alias stays: those references are
+// intra-image and the gnustep class object is global.
+#define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)                                  \
+  __pragma(comment(linker,                                                     \
+      "/alternatename:OBJC_CLASS_$_" #name "=$_OBJC_CLASS_" #name))            \
+  static_assert(true, "swallow the call-site semicolon")
+#elif !defined(__APPLE__)
 #define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)                                  \
   __asm__(".globl \"OBJC_CLASS_$_" #name "\"\n"                                \
           ".set \"OBJC_CLASS_$_" #name "\", ._OBJC_CLASS_" #name "\n"          \

@@ -328,6 +328,15 @@ elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "LINUX")
   endif()
 elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "WINDOWS")
   list(APPEND swift_core_private_link_libraries shell32;DbgHelp;Synchronization)
+  # HARMONY (W3): the Windows arm of the slice-6i libobjc link.  The DLL
+  # links through lld-link directly (no GNU driver), so the spelling is
+  # -libpath: + the import lib name; swiftc-emitted objects also carry
+  # /DEFAULTLIB:objc.lib autolink directives that resolve through the same
+  # libpath.
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP AND SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR)
+    list(APPEND swift_core_link_flags "-libpath:${SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR}")
+    list(APPEND swift_core_private_link_libraries objc)
+  endif()
 endif()
 
 if(NOT "${CMAKE_BUILD_TYPE}" STREQUAL "MinSizeRel")

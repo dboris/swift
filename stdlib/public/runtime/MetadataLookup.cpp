@@ -54,7 +54,10 @@ using namespace reflection;
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <objc/objc.h>
+// HARMONY (W3): interop now compiles on PE, which has no dlfcn.
+#if __has_include(<dlfcn.h>)
 #include <dlfcn.h>
+#endif
 #endif
 
 #if __has_include(<mach-o/dyld_priv.h>)

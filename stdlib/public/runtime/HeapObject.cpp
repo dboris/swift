@@ -41,7 +41,10 @@
 # include <objc/message.h>
 # include <objc/objc.h>
 # include "swift/Runtime/ObjCBridge.h"
-# include <dlfcn.h>
+// HARMONY (W3): interop now compiles on PE, which has no dlfcn.
+# if __has_include(<dlfcn.h>)
+#  include <dlfcn.h>
+# endif
 #endif
 #if SWIFT_STDLIB_HAS_MALLOC_TYPE
 # include <malloc_type_private.h>

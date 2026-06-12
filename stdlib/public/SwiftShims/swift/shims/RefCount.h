@@ -1646,7 +1646,9 @@ static_assert(sizeof(InlineRefCounts) == sizeof(InlineRefCountsPlaceholder),
               "InlineRefCounts and InlineRefCountsPlaceholder must match");
 static_assert(sizeof(InlineRefCounts) == sizeof(__swift_uintptr_t),
               "InlineRefCounts must be pointer-sized");
-static_assert(__alignof(InlineRefCounts) == __alignof(__swift_uintptr_t),
+// HARMONY (W3): alignof, not __alignof -- WOCStdLib cdefs.h redefines the
+// GNU spelling into a broken macro when __GNUC__ is absent (clang-cl).
+static_assert(alignof(InlineRefCounts) == alignof(__swift_uintptr_t),
               "InlineRefCounts must be pointer-aligned");
 
 #endif // !defined(__swift__)

@@ -3479,9 +3479,19 @@ static inline ClassROData *getROData(ObjCClass *theClass) {
 #define EMERGENCY_PREFIX "$SwiftEmergencyPlaceholderClassName"
 static char *copyEmergencyName(ClassMetadata *theClass) {
   char *nameBuf = nullptr;
+#if defined(_WIN32)
+  // HARMONY (W3): ucrt has no asprintf; snprintf-measure then allocate.
+  int len = snprintf(nullptr, 0, EMERGENCY_PREFIX "%016" PRIxPTR,
+                     (uintptr_t)theClass);
+  nameBuf = reinterpret_cast<char *>(malloc(len + 1));
+  if (nameBuf)
+    snprintf(nameBuf, len + 1, EMERGENCY_PREFIX "%016" PRIxPTR,
+             (uintptr_t)theClass);
+#else
   asprintf(&nameBuf,
            EMERGENCY_PREFIX "%016" PRIxPTR,
            (uintptr_t)theClass);
+#endif
   return nameBuf;
 }
 

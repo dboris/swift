@@ -33,10 +33,17 @@
 #include "swift/Runtime/Debug.h"
 #include "swift/Runtime/ObjCBridge.h"
 #include <Foundation/Foundation.h>
+// HARMONY (W3): interop now compiles on PE, which has no dlfcn; the
+// RTLD_DEFAULT process-wide lookups below get a loaded-module walk
+// instead (the overlay conformance descriptors are DLL exports there).
+#if __has_include(<dlfcn.h>)
 #include <dlfcn.h>
+#endif
 #include <objc/NSObject.h>
 #include <objc/message.h>
 #include <objc/objc.h>
+
+#include "swift/Runtime/HarmonyPE.h"
 #include <objc/runtime.h>
 
 using namespace swift;
@@ -329,7 +336,7 @@ static const WitnessTable *getNSErrorConformanceToError() {
 
   auto *conformance = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<const ProtocolConformanceDescriptor *>(
-      dlsym(RTLD_DEFAULT,
+      SWIFT_HARMONY_DLSYM_DEFAULT(
             MANGLE_AS_STRING(MANGLE_SYM(So10CFErrorRefas5Error10FoundationMc)))));
   assert(conformance &&
          "Foundation overlay not loaded, or 'CFError : Error' conformance "
@@ -342,7 +349,7 @@ static const WitnessTable *getNSErrorConformanceToError() {
 static const HashableWitnessTable *getNSErrorConformanceToHashable() {
   auto *conformance = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<const ProtocolConformanceDescriptor *>(
-      dlsym(RTLD_DEFAULT,
+      SWIFT_HARMONY_DLSYM_DEFAULT(
             MANGLE_AS_STRING(MANGLE_SYM(So8NSObjectCSH10ObjectiveCMc)))));
   assert(conformance &&
          "ObjectiveC overlay not loaded, or 'NSObject : Hashable' conformance "
@@ -485,7 +492,7 @@ id _swift_stdlib_getErrorDefaultUserInfo(OpaqueValue *error,
     const WitnessTable *Error);
   auto foundationGetDefaultUserInfo = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<GetErrorDefaultUserInfoFunction>(
-      dlsym(RTLD_DEFAULT,
+      SWIFT_HARMONY_DLSYM_DEFAULT(
             MANGLE_AS_STRING(MANGLE_SYM(10Foundation24_getErrorDefaultUserInfoyyXlSgxs0C0RzlF)))));
 
   if (!foundationGetDefaultUserInfo) {
@@ -617,13 +624,13 @@ swift::tryDynamicCastNSErrorObjectToValue(HeapObject *object,
     const WitnessTable *);
   auto bridgeNSErrorToError = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<BridgeErrorToNSErrorFunction>(
-      dlsym(RTLD_DEFAULT,
+      SWIFT_HARMONY_DLSYM_DEFAULT(
             MANGLE_AS_STRING(MANGLE_SYM(10Foundation21_bridgeNSErrorToError_3outSbSo0C0C_SpyxGtAA021_ObjectiveCBridgeableE0RzlF)))));
   
   // protocol _ObjectiveCBridgeableError
   auto TheObjectiveCBridgeableError = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<ProtocolDescriptor *>(
-      dlsym(RTLD_DEFAULT,
+      SWIFT_HARMONY_DLSYM_DEFAULT(
             MANGLE_AS_STRING(MANGLE_SYM(10Foundation26_ObjectiveCBridgeableErrorMp)))));
 
   // If the Foundation overlay isn't loaded, then arbitrary NSErrors can't be

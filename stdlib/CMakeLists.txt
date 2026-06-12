@@ -19,6 +19,18 @@ else()
   set(CMAKE_INCLUDE_SYSTEM_FLAG_CXX "-Isystem")
 endif()
 
+# HARMONY (W3): CMake's clang-cl CXX rule hardwires -TP (treat-as-C++),
+# which turns the runtime's .mm TUs' live `#import` lines into MSVC
+# type-library imports under interop ("#import of type library is an
+# unsupported Microsoft feature" x57 -- the same family as WinCatalyst's
+# CMAKE_CXX_COMPILE_OPTIONS_CREATE_PCH override, lesson archive).  Drop
+# -TP and let the driver infer language from the extension, exactly as
+# the GNU driver does on every other platform (.cpp still compiles as
+# C++; the rule is otherwise unchanged).
+if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
+  string(REPLACE " -TP " " " CMAKE_CXX_COMPILE_OBJECT "${CMAKE_CXX_COMPILE_OBJECT}")
+endif()
+
 # Add path for custom CMake modules.
 list(APPEND CMAKE_MODULE_PATH
   "${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules")

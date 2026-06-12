@@ -50,7 +50,10 @@
 #include "SwiftValue.h"
 #include "WeakReference.h"
 #if SWIFT_OBJC_INTEROP
+// HARMONY (W3): interop now compiles on PE, which has no dlfcn.
+#if __has_include(<dlfcn.h>)
 #include <dlfcn.h>
+#endif
 #endif
 #include <inttypes.h>
 #include <stdio.h>
@@ -215,6 +218,13 @@ static id _getObjectDescription(SwiftObject *obj) {
                         _swift_getClassOfAllocated(obj));
 }
 
+#if defined(_WIN32)
+// HARMONY (W3): the value-holding half of the 6i isa-mask pair; PE cannot
+// bind another DLL's ABSOLUTE symbol address, so the +initialize assert
+// reads this data export instead.
+extern "C" __declspec(dllimport) const uintptr_t objc_debug_isa_class_mask;
+#endif
+
 static id _getClassDescription(Class cls) {
   const char *name = class_getName(cls);
   int len = strlen(name);
@@ -224,7 +234,14 @@ static id _getClassDescription(Class cls) {
 @implementation SwiftObject
 + (void)initialize {
 #if SWIFT_HAS_ISA_MASKING && !TARGET_OS_SIMULATOR && !NDEBUG
+#if defined(_WIN32)
+  // HARMONY (W3): PE cannot bind the ADDRESS of another DLL's absolute
+  // symbol; libobjc2's value-holding data export carries the same truth
+  // (the 6i isa-mask pair).
+  uintptr_t libObjCMask = objc_debug_isa_class_mask;
+#else
   uintptr_t libObjCMask = (uintptr_t)&objc_absolute_packed_isa_class_mask;
+#endif
   assert(libObjCMask);
 
 #  if __arm64__ && !__has_feature(ptrauth_calls)
@@ -1532,6 +1549,14 @@ static bool isUniquelyReferenced(id object) {
   if (!SWIFT_RUNTIME_WEAK_CHECK(objc_isUniquelyReferenced))
     return false;
   return SWIFT_RUNTIME_WEAK_USE(objc_isUniquelyReferenced(object));
+#elif defined(_WIN32)
+  // HARMONY (W3): no RTLD_NEXT on PE; libobjc2 -- the only objc runtime on
+  // this stack -- exports it, so resolve from the loaded objc.dll.
+  auto objcIsUniquelyRefd = SWIFT_LAZY_CONSTANT(reinterpret_cast<bool (*)(id)>(
+      (void *)GetProcAddress(GetModuleHandleW(L"objc"),
+                             "objc_isUniquelyReferenced")));
+
+  return objcIsUniquelyRefd && objcIsUniquelyRefd(object);
 #else
   auto objcIsUniquelyRefd = SWIFT_LAZY_CONSTANT(reinterpret_cast<bool (*)(id)>(
       dlsym(RTLD_NEXT, "objc_isUniquelyReferenced")));

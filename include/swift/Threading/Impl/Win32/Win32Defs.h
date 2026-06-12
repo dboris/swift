@@ -34,7 +34,10 @@
 typedef void VOID, *PVOID;
 typedef unsigned char BYTE;
 typedef BYTE BOOLEAN;
-typedef int BOOL;
+// HARMONY (W3, wincat lesson #133): the SDK BOOL spelling is _WINBOOL on
+// this stack (ObjC owns the BOOL name under the gnustep-3.0 ABI); identical
+// to the renamed minwindef typedef, so both orders parse.
+typedef int _WINBOOL;
 typedef unsigned long DWORD;
 typedef long LONG;
 typedef unsigned long ULONG;
@@ -88,7 +91,7 @@ WINBASEAPI VOID WINAPI WakeConditionVariable(
 WINBASEAPI VOID WINAPI WakeAllConditionVariable(
   PCONDITION_VARIABLE ConditionVariable
 );
-WINBASEAPI BOOL WINAPI SleepConditionVariableSRW(
+WINBASEAPI _WINBOOL WINAPI SleepConditionVariableSRW(
   PCONDITION_VARIABLE ConditionVariable,
   PSRWLOCK SRWLock,
   DWORD dwMilliseconds,
@@ -110,8 +113,8 @@ WINBASEAPI VOID WINAPI LeaveCriticalSection(
 
 WINBASEAPI DWORD WINAPI FlsAlloc(PFLS_CALLBACK_FUNCTION lpCallback);
 WINBASEAPI PVOID WINAPI FlsGetValue(DWORD dwFlsIndex);
-WINBASEAPI BOOL WINAPI FlsSetValue(DWORD dwFlsIndex, PVOID lpFlsData);
-WINBASEAPI BOOL WINAPI FlsFree(DWORD dwFlsIndex);
+WINBASEAPI _WINBOOL WINAPI FlsSetValue(DWORD dwFlsIndex, PVOID lpFlsData);
+WINBASEAPI _WINBOOL WINAPI FlsFree(DWORD dwFlsIndex);
 }
 
 namespace swift {
@@ -154,7 +157,7 @@ inline VOID WakeConditionVariable(PSWIFT_CONDITION_VARIABLE CondVar) {
 inline VOID WakeAllConditionVariable(PSWIFT_CONDITION_VARIABLE CondVar) {
   ::WakeAllConditionVariable(reinterpret_cast<PCONDITION_VARIABLE>(CondVar));
 }
-inline BOOL SleepConditionVariableSRW(PSWIFT_CONDITION_VARIABLE CondVar,
+inline _WINBOOL SleepConditionVariableSRW(PSWIFT_CONDITION_VARIABLE CondVar,
                                       PSWIFT_SRWLOCK SRWLock,
                                       DWORD dwMilliseconds,
                                       ULONG Flags) {

@@ -394,6 +394,32 @@ function(_add_target_variant_c_compile_flags)
     # option-A 5-word class head doubles as the objc4 layout Swift expects;
     # -fobjc-runtime is unused-argument noise on the .c/.cpp sources).
     list(APPEND result "-DSWIFT_OBJC_INTEROP=1")
+    # HARMONY (W3): on Windows the runtime compiles with the clang-cl
+    # driver (the official build.ps1 convention -- the upstream Windows
+    # cmake arms hardcode cl-spelled flags like /GR- and /MD, so a
+    # GNU-driver clang fights every upstream site).  GNU-spelled driver
+    # flags pass through /clang:<flag>; -D and -W spellings clang-cl
+    # takes natively.
+    if("${CFLAGS_SDK}" STREQUAL "WINDOWS")
+      set(_harmony_gnuflag "/clang:")
+      # WinCatalyst lesson #133: signed-char ObjC BOOL vs minwindef's
+      # `typedef int BOOL` -- pre-parse the SDK umbrella renamed in EVERY
+      # runtime TU (the chokepoint, not per-file hacks).
+      list(APPEND result
+           "/clang:-include${SWIFT_SOURCE_DIR}/stdlib/public/runtime/HarmonySafeWindows.h")
+      # An optional serving-env prelude from the driver -- WinCatalyst's
+      # stub shadow of libdispatch's os/generic_win_base.h pre-arms the
+      # REAL header's include guard (`typedef void pthread_attr_t` there
+      # clashes with WOCStdLib's _pthreadtypes; the stub defers to it).
+      # A forced include is the only thing that outranks upstream's
+      # SWIFT_PATH_TO_LIBDISPATCH_SOURCE -I.
+      if(SWIFT_STDLIB_OBJC_INTEROP_PRELUDE_INCLUDE)
+        list(APPEND result
+             "/clang:-include${SWIFT_STDLIB_OBJC_INTEROP_PRELUDE_INCLUDE}")
+      endif()
+    else()
+      set(_harmony_gnuflag "")
+    endif()
     # Two single-path cache vars (list separators do not survive
     # build-script's --extra-cmake-options handling): libobjc2's include
     # dir, and the CoreFoundation header dir (ErrorObject.h includes
@@ -404,10 +430,10 @@ function(_add_target_variant_c_compile_flags)
     # to the runtime's -Werror set (variadic-macro + narrowing errors in
     # CFStream.h/ForSwiftFoundationOnly.h).  -isystem is Darwin parity.
     if(SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR)
-      list(APPEND result "-isystem${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
+      list(APPEND result "${_harmony_gnuflag}-isystem${SWIFT_STDLIB_OBJC_INTEROP_INCLUDE_DIR}")
     endif()
     if(SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR)
-      list(APPEND result "-isystem${SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR}")
+      list(APPEND result "${_harmony_gnuflag}-isystem${SWIFT_STDLIB_OBJC_INTEROP_CF_INCLUDE_DIR}")
     endif()
     # The Foundation the runtime's .mm files #import (SwiftObject.mm,
     # ErrorObject.mm, SwiftValue.mm, ReflectionMirrorObjC.mm) is the
@@ -418,24 +444,55 @@ function(_add_target_variant_c_compile_flags)
     # not survive --extra-cmake-options) plus the WinObjC consumer-view
     # macros and MS-extension flags its headers require.
     if(SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS)
-      string(REPLACE ":" ";" _harmony_ns_include_dirs
-             "${SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS}")
+      if("${CFLAGS_SDK}" STREQUAL "WINDOWS")
+        # HARMONY (W3): on Windows the var is a normal CMake LIST -- the
+        # colon convention below would split drive letters (C:/...), and
+        # the Windows driver passes -D vars to cmake directly (no
+        # build-script --extra-cmake-options to eat semicolons).
+        set(_harmony_ns_include_dirs "${SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS}")
+      else()
+        string(REPLACE ":" ";" _harmony_ns_include_dirs
+               "${SWIFT_STDLIB_OBJC_INTEROP_NS_INCLUDE_DIRS}")
+      endif()
       foreach(_harmony_ns_dir ${_harmony_ns_include_dirs})
-        list(APPEND result "-isystem${_harmony_ns_dir}")
+        list(APPEND result "${_harmony_gnuflag}-isystem${_harmony_ns_dir}")
       endforeach()
-      list(APPEND result
-           "-fdeclspec" "-fms-extensions"
-           "-Wno-ignored-attributes" "-Wno-unknown-attributes"
-           "-DCF_IMPLICIT_BRIDGING_DISABLED=" "-DCF_IMPLICIT_BRIDGING_ENABLED="
-           "-DDEPLOYMENT_RUNTIME_SWIFT=1" "-DDEPLOYMENT_TARGET_LINUX"
-           "-DGNUSTEP" "-DGNUSTEP_RUNTIME=1" "-DGNUSTEP_WITH_DLL"
-           "-DNOTINPLAN_METHOD=" "-DNOTINPLAN_PROPERTY="
-           "-DSB_IMPEXP=" "-DSTUB_METHOD=" "-DSTUB_PROPERTY="
-           "-DU_SHOW_CPLUSPLUS_API=0"
-           "-DWINOBJC" "-D_NATIVE_OBJC_EXCEPTIONS" "-D_NONFRAGILE_ABI=1"
-           "-D_GNU_SOURCE")
+      if("${CFLAGS_SDK}" STREQUAL "WINDOWS")
+        # HARMONY (W3): the WINDOWS consumer-view macro set, taken verbatim
+        # from the proven consumer package (wincatalyst_add_app's compile
+        # command for the demo app TUs -- the Windows analog of the Linux
+        # arm's nstest-target flags).  The -fcf-runtime-abi=swift-5.0 +
+        # WINCATALYST_CFSTR_BUILTIN pair travels TOGETHER (spike-17 wall 3:
+        # the marker without the flag silently emits 4-word classic
+        # constants into a 5-word world).
+        # -fdeclspec/-fms-extensions are clang-cl defaults and not repeated.
+        list(APPEND result
+             "-Wno-ignored-attributes" "-Wno-unknown-attributes"
+             "/clang:-fcf-runtime-abi=swift-5.0" "-DWINCATALYST_CFSTR_BUILTIN=1"
+             "-DCF_IMPLICIT_BRIDGING_DISABLED=" "-DCF_IMPLICIT_BRIDGING_ENABLED="
+             "-DDEPLOYMENT_RUNTIME_SWIFT=1"
+             "-DGNUSTEP" "-DGNUSTEP_RUNTIME=1" "-DGNUSTEP_WITH_DLL"
+             "-DNOTINPLAN_METHOD=" "-DNOTINPLAN_PROPERTY="
+             "-DSB_IMPEXP=" "-DSTUB_METHOD=" "-DSTUB_PROPERTY="
+             "-DUNICODE" "-D_UNICODE"
+             "-DWIN32_LEAN_AND_MEAN" "-DNOMINMAX"
+             "-D_NATIVE_OBJC_EXCEPTIONS" "-D_NONFRAGILE_ABI=1")
+      else()
+        list(APPEND result
+             "-fdeclspec" "-fms-extensions"
+             "-Wno-ignored-attributes" "-Wno-unknown-attributes"
+             "-DCF_IMPLICIT_BRIDGING_DISABLED=" "-DCF_IMPLICIT_BRIDGING_ENABLED="
+             "-DDEPLOYMENT_RUNTIME_SWIFT=1" "-DDEPLOYMENT_TARGET_LINUX"
+             "-DGNUSTEP" "-DGNUSTEP_RUNTIME=1" "-DGNUSTEP_WITH_DLL"
+             "-DNOTINPLAN_METHOD=" "-DNOTINPLAN_PROPERTY="
+             "-DSB_IMPEXP=" "-DSTUB_METHOD=" "-DSTUB_PROPERTY="
+             "-DU_SHOW_CPLUSPLUS_API=0"
+             "-DWINOBJC" "-D_NATIVE_OBJC_EXCEPTIONS" "-D_NONFRAGILE_ABI=1"
+             "-D_GNU_SOURCE")
+      endif()
     endif()
-    list(APPEND result "-fblocks" "-fobjc-runtime=gnustep-3.0"
+    list(APPEND result "${_harmony_gnuflag}-fblocks"
+                       "${_harmony_gnuflag}-fobjc-runtime=gnustep-3.0"
                        "-D__GNUSTEP_RUNTIME_ABI_30__"
                        "-Wno-unused-command-line-argument")
   endif()
