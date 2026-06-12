@@ -90,11 +90,20 @@ DECLARE_EMPTY_METADATA_SECTION(objc_selrefs, "aw")
 DECLARE_BOUNDS(objc_selrefs)
 DECLARE_EMPTY_METADATA_SECTION(objc_classlist, "awR")
 DECLARE_BOUNDS(objc_classlist)
+// W4.4: objc_catlist -- objc4 category_t records (@objc extension members
+// on imported / other-module classes), invisible to ObjC sends until
+// registered.  On ELF every category's class word is load-bound, so the
+// list goes to libobjc2 as-is.
+DECLARE_EMPTY_METADATA_SECTION(objc_catlist, "awR")
+DECLARE_BOUNDS(objc_catlist)
 
 void objc_load_swift_image_np(const char **selrefs_begin,
                               const char **selrefs_end,
                               void **classlist_begin,
                               void **classlist_end) __attribute__((__weak__));
+void objc_load_swift_image_categories_np(void **catlist_begin,
+                                         void **catlist_end)
+    __attribute__((__weak__));
 }
 #endif
 
@@ -162,6 +171,14 @@ static void swift_image_constructor() {
             const_cast<char *>(&__stop_objc_selrefs)),
         reinterpret_cast<void **>(const_cast<char *>(&__start_objc_classlist)),
         reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_classlist)));
+  }
+  // W4.4: register this image's Swift-emitted categories AFTER its classes.
+  // Weak: an older libobjc2 lacks the entry point and the categories stay
+  // dormant (the gate's category leg catches the staleness loudly).
+  if (&objc_load_swift_image_categories_np != nullptr) {
+    objc_load_swift_image_categories_np(
+        reinterpret_cast<void **>(const_cast<char *>(&__start_objc_catlist)),
+        reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_catlist)));
   }
 #endif
 }
