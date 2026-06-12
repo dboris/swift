@@ -247,7 +247,18 @@ id swift::dynamicCastValueToNSError(OpaqueValue *src,
 
 static Class getAndBridgeSwiftNativeNSErrorClass() {
   Class nsErrorClass = swift::getNSErrorClass();
+#if defined(__APPLE__)
   Class ourClass = [__SwiftNativeNSError class];
+#else
+  // HARMONY (W5): take the class object WITHOUT messaging it.  Pre-swap
+  // the standin chain is an objc_root_class with no NSObject surface, so
+  // [__SwiftNativeNSError class] -- the objc4 realization-forcing idiom
+  // -- lands in unrecognized-selector forwarding and aborts (gate-5
+  // leg 11 found it on both formats; the standin's own contract says
+  // "never messaged before the swap").  libobjc2 realizes lazily; the
+  // by-name lookup returns the registered class object directly.
+  Class ourClass = objc_lookUpClass("__SwiftNativeNSError");
+#endif
   // We want "err as AnyObject" to do *something* even without Foundation
   if (nsErrorClass) {
     #pragma clang diagnostic push
