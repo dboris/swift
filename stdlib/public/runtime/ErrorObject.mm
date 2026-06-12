@@ -333,13 +333,18 @@ static const WitnessTable *getNSErrorConformanceToError() {
   // The error bridging info lives in the Foundation overlay, but it should be
   // safe to assume that that's been linked in if a user is using NSError in
   // their Swift source.
+  // HARMONY (W5): the NSError conformance, not CFError's -- on the
+  // WinCatalyst stack CF types do not import as bridgeable classes (the
+  // consumer view empties the CF_BRIDGED_TYPE machinery), so the overlay
+  // defines `extension NSError : Error` only.  Toll-free interchange-
+  // ability (the comment above) is exactly why the swap is sound.
 
   auto *conformance = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<const ProtocolConformanceDescriptor *>(
       SWIFT_HARMONY_DLSYM_DEFAULT(
-            MANGLE_AS_STRING(MANGLE_SYM(So10CFErrorRefas5Error10FoundationMc)))));
+            MANGLE_AS_STRING(MANGLE_SYM(So7NSErrorCs5Error10FoundationMc)))));
   assert(conformance &&
-         "Foundation overlay not loaded, or 'CFError : Error' conformance "
+         "Foundation overlay not loaded, or 'NSError : Error' conformance "
          "not available");
   return swift_getWitnessTable(conformance,
                                conformance->getCanonicalTypeMetadata(),
@@ -347,12 +352,18 @@ static const WitnessTable *getNSErrorConformanceToError() {
 }
 
 static const HashableWitnessTable *getNSErrorConformanceToHashable() {
+  // HARMONY (W5): module Foundation, not ObjectiveC -- Apple's NSObject is
+  // declared in objc/NSObject.h so its Equatable/Hashable live in the
+  // ObjectiveC overlay; WinCatalyst's NSObject is declared in the
+  // Foundation headers and the conformance lives in the Foundation
+  // overlay (overlays/Foundation/Foundation.swift), so the conformance
+  // descriptor mangles with the Foundation module.
   auto *conformance = SWIFT_LAZY_CONSTANT(
     reinterpret_cast<const ProtocolConformanceDescriptor *>(
       SWIFT_HARMONY_DLSYM_DEFAULT(
-            MANGLE_AS_STRING(MANGLE_SYM(So8NSObjectCSH10ObjectiveCMc)))));
+            MANGLE_AS_STRING(MANGLE_SYM(So8NSObjectCSH10FoundationMc)))));
   assert(conformance &&
-         "ObjectiveC overlay not loaded, or 'NSObject : Hashable' conformance "
+         "Foundation overlay not loaded, or 'NSObject : Hashable' conformance "
          "not available");
   return (const HashableWitnessTable *)swift_getWitnessTable(
            conformance,
