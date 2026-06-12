@@ -109,7 +109,11 @@ endif()
 # Symlink in the Clang headers from either the provided clang...
 if(NOT SWIFT_INCLUDE_TOOLS AND
    (SWIFT_BUILD_RUNTIME_WITH_HOST_COMPILER OR SWIFT_PREBUILT_CLANG))
-  if(SWIFT_COMPILER_IS_MSVC_LIKE)
+  # HARMONY (W3): "MSVC-like" describes the target ABI, not the driver
+  # flavor -- a GNU-driver clang.exe targeting the MSVC triple takes
+  # -print-resource-dir, and the /clang: spelling makes it emit nothing
+  # (ERROR_QUIET), which cascaded into an empty symlink-install TARGET.
+  if(SWIFT_COMPILER_IS_MSVC_LIKE AND NOT "${CMAKE_C_COMPILER_FRONTEND_VARIANT}" STREQUAL "GNU")
     execute_process(COMMAND ${CMAKE_C_COMPILER} /clang:-print-resource-dir
       OUTPUT_VARIABLE clang_headers_location
       OUTPUT_STRIP_TRAILING_WHITESPACE

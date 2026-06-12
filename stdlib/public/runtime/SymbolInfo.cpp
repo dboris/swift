@@ -142,7 +142,7 @@ std::optional<SymbolInfo> SymbolInfo::lookup(const void *address) {
 #elif defined(_WIN32) && !defined(__CYGWIN__)
   Win32ModuleInfo moduleInfo = moduleInfoFromAddress(address);
   SYMBOL_INFO_PACKAGE package;
-  BOOL bRet;
+  _WINBOOL bRet; // HARMONY (W3, wincat lesson #133): Win32 BOOL spelling
 
   package.si.SizeOfStruct = sizeof(SYMBOL_INFO);
   package.si.MaxNameLen = MAX_SYM_NAME;

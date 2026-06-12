@@ -554,7 +554,8 @@ SWIFT_ALLOWED_RUNTIME_GLOBAL_CTOR_BEGIN
 // swallowing so that the error handling works as expected.
 __attribute__((__constructor__))
 static void ConfigureExceptionPolicy() {
-  BOOL Suppress = FALSE;
+  // HARMONY (W3, wincat lesson #133): Win32 BOOL is spelled _WINBOOL here.
+  _WINBOOL Suppress = FALSE;
   SetUserObjectInformationA(GetCurrentProcess(),
                             UOI_TIMERPROC_EXCEPTION_SUPPRESSION,
                             &Suppress, sizeof(Suppress));

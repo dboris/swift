@@ -16,6 +16,14 @@
 #include <cstdint>
 #include <new>
 
+#if SWIFT_OBJC_INTEROP
+// HARMONY (W3): GetModuleHandleW/GetProcAddress for the objc loader probe
+// below.  Include-guard no-op when the HarmonySafeWindows chokepoint
+// already pre-parsed the SDK.
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 extern "C" const char __ImageBase[];
 
 #define PASTE_EXPANDED(a,b) a##b
@@ -58,6 +66,83 @@ DECLARE_SWIFT_SECTION(sw5ratt)
 DECLARE_SWIFT_SECTION(sw5test)
 }
 
+#if SWIFT_OBJC_INTEROP
+// HARMONY (W3): the COFF arm of the slice-10 design -- under ObjC interop
+// over libobjc2, swiftc emits objc4-shaped grouped sections
+// (.objc_selrefs$B, .objc_classlist$B) the GNUstep loader never scans.
+// Bracket them with $A/$C bookends (the same technique as the swift5
+// sections above) and hand the bounds to libobjc2's
+// objc_load_swift_image_np from the image constructor.  The entry point
+// is resolved DYNAMICALLY from the loaded objc module: swiftrt.obj links
+// into every Swift image and must not impose objc.lib on non-ObjC ones
+// (their sections are empty anyway), and PE has no weak-undefined
+// imports.  Registration is NAME-ONLY on the libobjc2 side; dtables stay
+// with the lazy realizer (the slice-10 order lesson holds on PE too:
+// .CRT$XCIS ctors run per-DLL at load, before the exe's).
+#define DECLARE_OBJC_SECTION(name)                                            \
+  PRAGMA(section("." #name "$A", long, read, write))                          \
+  __declspec(allocate("." #name "$A"))                                        \
+  __declspec(align(1))                                                        \
+  static uintptr_t __start_##name = 0;                                        \
+                                                                               \
+  PRAGMA(section("." #name "$C", long, read, write))                          \
+  __declspec(allocate("." #name "$C"))                                        \
+  __declspec(align(1))                                                        \
+  static uintptr_t __stop_##name = 0;
+
+extern "C" {
+DECLARE_OBJC_SECTION(objc_selrefs)
+DECLARE_OBJC_SECTION(objc_classlist)
+}
+#undef DECLARE_OBJC_SECTION
+
+// swiftc-emitted class metadata initializes each cache word with the
+// ADDRESS of _objc_empty_cache -- a load-time data relocation PE cannot
+// express against another DLL's export (the W2 constant-anchor constraint,
+// same shape).  Every Swift image therefore carries a module-local link
+// anchor under that name; objc_load_swift_image_np stamps the CANONICAL
+// objc.dll address into the registered classes' cache words before
+// anything can message them, so the anchor's contents are never read.
+extern "C" __declspec(align(64)) char
+    _swift_harmony_objc_empty_cache_anchor[4096] = {0};
+#pragma comment( \
+    linker, \
+    "/alternatename:_objc_empty_cache=_swift_harmony_objc_empty_cache_anchor")
+
+// The same constraint one stratum up: swiftc-emitted METACLASS metadata
+// (the CMm objects of SwiftObject-rooted classes) eagerly references the
+// root metaclasses by symbol -- OBJC_METACLASS_$__TtCs12_SwiftObject lives
+// in swiftCore.dll, OBJC_METACLASS_$_NSObject in the ObjC Foundation DLL.
+// (Only the metaclass chain is raw objc4; class-object superrefs are lazy
+// Swift metadata.)  Anchor both per image; the constructor below rewrites
+// metaclass isa/superclass words that point at an anchor to the CANONICAL
+// metaclass, found through the runtime by name -- DLL dependency order
+// guarantees the defining image registered first.
+#define HARMONY_METACLASS_ANCHOR(sym, cls)                                     \
+  extern "C" __declspec(align(64)) char                                        \
+      _swift_harmony_mc_anchor_##cls[64] = {0};                                \
+  __pragma(comment(linker, "/alternatename:OBJC_METACLASS_$_" sym              \
+                           "=_swift_harmony_mc_anchor_" #cls))                 \
+  static_assert(true, "swallow the call-site semicolon")
+
+HARMONY_METACLASS_ANCHOR("_TtCs12_SwiftObject", SwiftObject);
+HARMONY_METACLASS_ANCHOR("NSObject", NSObject);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSArrayBase", NSArrayBase);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSMutableArrayBase", NSMutableArrayBase);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSDictionaryBase", NSDictionaryBase);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSSetBase", NSSetBase);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSStringBase", NSStringBase);
+HARMONY_METACLASS_ANCHOR("__SwiftNativeNSEnumeratorBase", NSEnumeratorBase);
+#undef HARMONY_METACLASS_ANCHOR
+
+namespace {
+struct HarmonyMetaclassAnchor {
+  const char *className; // the runtime registration name
+  void *anchor;          // this image's link anchor for its metaclass
+};
+} // namespace
+#endif
+
 namespace {
 static swift::MetadataSections sections{};
 }
@@ -95,6 +180,71 @@ static void swift_image_constructor() {
 #undef SWIFT_SECTION_RANGE
 
   swift_addNewDSOImage(&sections);
+
+#if SWIFT_OBJC_INTEROP
+  // HARMONY (W3): register this image's objc4 sections with libobjc2 (see
+  // the section declarations above).  +1 skips the $A bookend's own slot,
+  // exactly like SWIFT_SECTION_RANGE does for the swift5 sections.
+  using objc_load_swift_image_fn = void (*)(const char **, const char **,
+                                            void **, void **);
+  using objc_get_class_fn = void *(*)(const char *);
+  if (HMODULE objcModule = GetModuleHandleW(L"objc")) {
+    void **classlistBegin =
+        reinterpret_cast<void **>(&__start_objc_classlist + 1);
+    void **classlistEnd = reinterpret_cast<void **>(&__stop_objc_classlist);
+
+    // Metaclass-chain fixup BEFORE registration: rewrite isa/superclass
+    // words of this image's metaclasses that point at the local link
+    // anchors onto the canonical root metaclasses, found through the
+    // runtime by name (class object word 0).  Within one image the
+    // gnustep registration ctor (.CRT$XCL) has already run when this
+    // (.CRT$XCIS) executes, and dependency DLLs initialized fully first
+    // -- so every defining class is findable by the time its anchors
+    // need resolving.
+    if (auto getClass = reinterpret_cast<objc_get_class_fn>(
+            reinterpret_cast<void *>(
+                GetProcAddress(objcModule, "objc_lookUpClass")))) {
+      const HarmonyMetaclassAnchor anchors[] = {
+          {"_TtCs12_SwiftObject", _swift_harmony_mc_anchor_SwiftObject},
+          {"NSObject", _swift_harmony_mc_anchor_NSObject},
+          {"__SwiftNativeNSArrayBase", _swift_harmony_mc_anchor_NSArrayBase},
+          {"__SwiftNativeNSMutableArrayBase",
+           _swift_harmony_mc_anchor_NSMutableArrayBase},
+          {"__SwiftNativeNSDictionaryBase",
+           _swift_harmony_mc_anchor_NSDictionaryBase},
+          {"__SwiftNativeNSSetBase", _swift_harmony_mc_anchor_NSSetBase},
+          {"__SwiftNativeNSStringBase", _swift_harmony_mc_anchor_NSStringBase},
+          {"__SwiftNativeNSEnumeratorBase",
+           _swift_harmony_mc_anchor_NSEnumeratorBase},
+      };
+      const int anchorCount = sizeof(anchors) / sizeof(anchors[0]);
+      void *canonical[anchorCount] = {};
+      for (int i = 0; i < anchorCount; ++i)
+        if (void *cls = getClass(anchors[i].className))
+          canonical[i] = *reinterpret_cast<void **>(cls); // word 0: isa
+      for (void **c = classlistBegin; c < classlistEnd; ++c) {
+        if (!*c)
+          continue;
+        void **cls = reinterpret_cast<void **>(*c);
+        void **meta = reinterpret_cast<void **>(cls[0]); // class isa
+        if (!meta)
+          continue;
+        for (int w = 0; w < 2; ++w) // metaclass isa + superclass
+          for (int i = 0; i < anchorCount; ++i)
+            if (meta[w] == anchors[i].anchor && canonical[i])
+              meta[w] = canonical[i];
+      }
+    }
+
+    if (auto loadImage = reinterpret_cast<objc_load_swift_image_fn>(
+            reinterpret_cast<void *>(
+                GetProcAddress(objcModule, "objc_load_swift_image_np")))) {
+      loadImage(reinterpret_cast<const char **>(&__start_objc_selrefs + 1),
+                reinterpret_cast<const char **>(&__stop_objc_selrefs),
+                classlistBegin, classlistEnd);
+    }
+  }
+#endif
 }
 
 #pragma section(".CRT$XCIS", long, read)

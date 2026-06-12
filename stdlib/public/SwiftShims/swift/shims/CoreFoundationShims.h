@@ -27,7 +27,13 @@ extern "C" {
 #endif
 
 #ifdef __OBJC2__
-#if __LLP64__
+// HARMONY (W3): this header is parsed standalone (the SwiftShims module),
+// where nothing defines __LLP64__ -- CFBase.h derives it from _WIN64 for
+// CF's own TUs, so on Win64 the shims silently took the 32-bit branch
+// while the live CF ABI is 64-bit (the same compiler-vs-runtime-disagree
+// shape as the 6i SWIFT_CLASS_IS_SWIFT_MASK find).  Make the guard
+// self-sufficient; Darwin/Linux preprocess identically.
+#if defined(__LLP64__) || defined(_WIN64)
 typedef unsigned long long _swift_shims_CFHashCode;
 typedef signed long long _swift_shims_CFIndex;
 #else
@@ -35,7 +41,14 @@ typedef unsigned long _swift_shims_CFHashCode;
 typedef signed long _swift_shims_CFIndex;
 #endif
 
+// HARMONY (W3): NSUInteger is pointer-sized on every platform this stack
+// serves (wincat: uintptr_t); bare unsigned long is 32-bit on LLP64 and
+// would truncate -hash through the trampolines.
+#if defined(_WIN64)
+typedef unsigned long long _swift_shims_NSUInteger;
+#else
 typedef unsigned long _swift_shims_NSUInteger;
+#endif
 
 // Consider creating SwiftMacTypes.h for these
 typedef unsigned char _swift_shims_Boolean;
@@ -64,14 +77,14 @@ _swift_stdlib_CFStringHashCString(const _swift_shims_UInt8 * _Nonnull bytes,
 SWIFT_RUNTIME_STDLIB_API
 const __swift_uint8_t * _Nullable
 _swift_stdlib_NSStringCStringUsingEncodingTrampoline(id _Nonnull obj,
-                                                     unsigned long encoding);
+                                                     _swift_shims_NSUInteger encoding);
 
 SWIFT_RUNTIME_STDLIB_API
 __swift_uint8_t
 _swift_stdlib_NSStringGetCStringTrampoline(id _Nonnull obj,
                                            _swift_shims_UInt8 *_Nonnull buffer,
                                            _swift_shims_CFIndex maxLength,
-                                           unsigned long encoding);
+                                           _swift_shims_NSUInteger encoding);
 
 SWIFT_RUNTIME_STDLIB_API
 __swift_uint8_t
@@ -85,7 +98,7 @@ _swift_stdlib_CreateIndirectTaggedPointerString(const __swift_uint8_t * _Nonnull
 SWIFT_RUNTIME_STDLIB_API
 _swift_shims_NSUInteger
 _swift_stdlib_NSStringLengthOfBytesInEncodingTrampoline(id _Nonnull obj,
-                                                        unsigned long encoding);
+                                                        _swift_shims_NSUInteger encoding);
 
 #endif // __OBJC2__
 

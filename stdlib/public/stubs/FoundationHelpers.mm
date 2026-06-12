@@ -23,7 +23,11 @@
 #include "swift/shims/CoreFoundationShims.h"
 #import <objc/runtime.h>
 #include "swift/Runtime/Once.h"
+// HARMONY (W3): no dlfcn on PE; SWIFT_HARMONY_DLSYM_DEFAULT walks modules.
+#include "swift/Runtime/HarmonyPE.h"
+#if __has_include(<dlfcn.h>)
 #include <dlfcn.h>
+#endif
 
 typedef enum {
     dyld_objc_string_kind
@@ -43,15 +47,14 @@ extern "C" bool _dyld_is_objc_constant(DyldObjCConstantKind kind,
 static void _initializeBridgingFunctionsImpl(void *ctxt) {
   auto getStringTypeID =
     (CFTypeID(*)(void))
-    dlsym(RTLD_DEFAULT, "CFStringGetTypeID");
+    SWIFT_HARMONY_DLSYM_DEFAULT("CFStringGetTypeID");
   assert(getStringTypeID);
   _CFStringTypeID = getStringTypeID();
   
-  _CFGetTypeID = (CFTypeID(*)(CFTypeRef obj))dlsym(RTLD_DEFAULT, "CFGetTypeID");
-  _CFStringHashNSString = (CFHashCode(*)(id))dlsym(RTLD_DEFAULT,
+  _CFGetTypeID = (CFTypeID(*)(CFTypeRef obj))SWIFT_HARMONY_DLSYM_DEFAULT("CFGetTypeID");
+  _CFStringHashNSString = (CFHashCode(*)(id))SWIFT_HARMONY_DLSYM_DEFAULT(
                                                    "CFStringHashNSString");
-  _CFStringHashCString = (CFHashCode(*)(const uint8_t *, CFIndex))dlsym(
-                                                   RTLD_DEFAULT,
+  _CFStringHashCString = (CFHashCode(*)(const uint8_t *, CFIndex))SWIFT_HARMONY_DLSYM_DEFAULT(
                                                    "CFStringHashCString");
 }
 
@@ -82,7 +85,7 @@ _swift_stdlib_CFStringHashCString(const _swift_shims_UInt8 * _Nonnull bytes,
 
 const __swift_uint8_t *
 _swift_stdlib_NSStringCStringUsingEncodingTrampoline(id _Nonnull obj,
-                                                  unsigned long encoding) {
+                                                  _swift_shims_NSUInteger encoding) {
   typedef __swift_uint8_t * _Nullable (*cStrImplPtr)(id, SEL, unsigned long);
   cStrImplPtr imp = (cStrImplPtr)class_getMethodImplementation([obj superclass],
                                                                @selector(cStringUsingEncoding:));
@@ -93,7 +96,7 @@ __swift_uint8_t
 _swift_stdlib_NSStringGetCStringTrampoline(id _Nonnull obj,
                                          _swift_shims_UInt8 *buffer,
                                          _swift_shims_CFIndex maxLength,
-                                         unsigned long encoding) {
+                                         _swift_shims_NSUInteger encoding) {
   typedef __swift_uint8_t (*getCStringImplPtr)(id,
                                              SEL,
                                              _swift_shims_UInt8 *,
@@ -109,7 +112,7 @@ _swift_stdlib_NSStringGetCStringTrampoline(id _Nonnull obj,
 SWIFT_RUNTIME_STDLIB_API
 _swift_shims_NSUInteger
 _swift_stdlib_NSStringLengthOfBytesInEncodingTrampoline(id _Nonnull obj,
-                                                        unsigned long encoding) {
+                                                        _swift_shims_NSUInteger encoding) {
   typedef _swift_shims_NSUInteger (*getLengthImplPtr)(id,
                                                       SEL,
                                                       unsigned long);

@@ -34,7 +34,12 @@
 #define SWIFT_DEAD_VOUCHER ((voucher_t)-1)
 
 // The OS has voucher support if it has the header or if it has ObjC interop.
-#if (SWIFT_HAS_VOUCHER_HEADER || SWIFT_OBJC_INTEROP) && !SWIFT_THREADING_NONE
+// HARMONY (W3): "ObjC interop" no longer implies Darwin -- on the gnustep
+// stack there is no voucher SPI (and this stack's <os/object.h> is
+// WinCatalyst's WOCStdLib shim, which has no OS_OBJECT_DECL_CLASS).
+// Windows-gated so the Linux interop build is byte-identical.
+#if (SWIFT_HAS_VOUCHER_HEADER || (SWIFT_OBJC_INTEROP && !defined(_WIN32))) && \
+    !SWIFT_THREADING_NONE
 #define SWIFT_HAS_VOUCHERS 1
 #endif
 
