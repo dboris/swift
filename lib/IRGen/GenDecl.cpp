@@ -4957,6 +4957,33 @@ getAddrOfHarmonyPEObjCClassAnchor(IRGenModule &IGM, ClassDecl *theClass,
   gv->setComdat(IGM.Module.getOrInsertComdat(gv->getName()));
   gv->setSection(isMetaclass ? ".hmny_manchor$B" : ".hmny_canchor$B");
   gv->setAlignment(llvm::MaybeAlign(IGM.getPointerAlignment().getValue()));
+
+  // HARMONY (WALL C STAGE 3, LINKAGE): a Swift Darwin-ABI classref to an
+  // imported ObjC class creates NO strong link reference, so a STATICALLY-linked
+  // class's registration TU is never pulled -- its gnustep .CRT$XCLz ctor never
+  // runs and the .CRT$XCT anchor resolver finds the class unregistered (the
+  // mandate's "linkage necessary but not sufficient").  Force-include the
+  // gnustep class symbol $_OBJC_CLASS_<name> per class: a STATIC class (e.g.
+  // uikit.lib's UIButton) is then pulled and registers; a DLL class has no such
+  // symbol (only __imp_$_OBJC_CLASS_<name>), so the paired /alternatename
+  // redirects the otherwise-undefined reference to this anchor (always defined)
+  // -- inert, because DLL classrefs resolve through __imp_, not the bare symbol.
+  // Emitted on the CLASS anchor only (the metaclass shares the same TU, pulled
+  // by the same symbol).  COFF only; mechanism validated with -Xlinker /INCLUDE
+  // + /alternatename (whole-archiving the framework is NOT viable -- UIKit's
+  // half-ported TUs carry dangling class refs).
+  if (!isMetaclass &&
+      IGM.TargetInfo.OutputObjectFormat == llvm::Triple::COFF) {
+    auto &ctx = IGM.getLLVMContext();
+    auto *linkerOptions =
+        IGM.Module.getOrInsertNamedMetadata("llvm.linker.options");
+    std::string classSym = ("$_OBJC_CLASS_" + runtimeName).str();
+    linkerOptions->addOperand(llvm::MDNode::get(
+        ctx, llvm::MDString::get(ctx, "/INCLUDE:" + classSym)));
+    linkerOptions->addOperand(llvm::MDNode::get(
+        ctx,
+        llvm::MDString::get(ctx, "/alternatename:" + classSym + "=" + symbol)));
+  }
   return gv;
 }
 
