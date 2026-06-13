@@ -397,3 +397,73 @@ __declspec(allocate(".CRT$XCIS"))
 extern "C" void (*pSwiftImageConstructor)(void) = &swift_image_constructor;
 #pragma comment(linker, "/include:" STRING(C_LABEL(pSwiftImageConstructor)))
 
+#if SWIFT_OBJC_INTEROP
+// HARMONY (WALL C, spike-23 STAGE 3): a SECOND, LATER pass that resolves the
+// eager .objc_classrefs / .objc_superrefs anchor slots for STATICALLY-LINKED
+// imported ObjC classes -- the case swift_image_constructor (.CRT$XCIS) cannot
+// handle.  Why a second ctor: clang emits each gnustep ObjC class's
+// registration ctor into .CRT$XCLz (CGObjCGNU.cpp), and Windows _initterm runs
+// .CRT$XC* in SUFFIX-SORTED order.  "XCIS" < "XCLz" (byte 3: 'I' < 'L'), so
+// swift_image_constructor runs BEFORE this image's own static classes register;
+// objc_lookUpClass() there returns null and the classref slot keeps its
+// .hmny_canchor anchor, so the first objc_msgSend faults.  (DLL classes escape:
+// their DLL's .CRT$XCLz runs entirely before the exe's constructors, so they
+// are already resolved at XCIS.)  This pass sits in .CRT$XCT, which sorts AFTER
+// .CRT$XCLz (registration done) and BEFORE user constructors .CRT$XCU (which may
+// message these classes).  It is ADDITIVE: swift_image_constructor is unchanged,
+// so DLL-class and Swift-native paths (the green W3.5 gate) are byte-for-byte
+// preserved.  Slots already resolved at XCIS no longer point into an anchor
+// range, so re-running here is a no-op for them; only still-anchored slots
+// (static imported classes, now registered) get rewritten.  Only the GENERAL
+// named anchors are walked -- the fixed swift-core roots are DLL/swiftCore
+// classes already resolved at XCIS.
+static void swift_resolve_static_objc_classrefs() {
+  HMODULE objcModule = GetModuleHandleW(L"objc");
+  if (!objcModule)
+    return;
+  using objc_get_class_fn = void *(*)(const char *);
+  auto getClass = reinterpret_cast<objc_get_class_fn>(reinterpret_cast<void *>(
+      GetProcAddress(objcModule, "objc_lookUpClass")));
+  if (!getClass)
+    return;
+
+  const char *canchorBegin =
+      reinterpret_cast<const char *>(&__start_hmny_canchor + 1);
+  const char *canchorEnd = reinterpret_cast<const char *>(&__stop_hmny_canchor);
+  const char *manchorBegin =
+      reinterpret_cast<const char *>(&__start_hmny_manchor + 1);
+  const char *manchorEnd = reinterpret_cast<const char *>(&__stop_hmny_manchor);
+  auto resolveNamedAnchor = [&](void *p) -> void * {
+    const char *cp = reinterpret_cast<const char *>(p);
+    if (cp >= canchorBegin && cp < canchorEnd)
+      return getClass(*reinterpret_cast<const char *const *>(cp));
+    if (cp >= manchorBegin && cp < manchorEnd)
+      if (void *cls = getClass(*reinterpret_cast<const char *const *>(cp)))
+        return *reinterpret_cast<void **>(cls); // word 0: metaclass
+    return nullptr;
+  };
+
+  struct RefRange {
+    void **begin, **end;
+  } refRanges[] = {
+      {reinterpret_cast<void **>(&__start_objc_classrefs + 1),
+       reinterpret_cast<void **>(&__stop_objc_classrefs)},
+      {reinterpret_cast<void **>(&__start_objc_superrefs + 1),
+       reinterpret_cast<void **>(&__stop_objc_superrefs)},
+  };
+  for (const auto &range : refRanges)
+    for (void **slot = range.begin; slot < range.end; ++slot)
+      if (*slot)
+        if (void *r = resolveNamedAnchor(*slot))
+          *slot = r;
+}
+
+#pragma section(".CRT$XCT", long, read)
+
+__declspec(allocate(".CRT$XCT"))
+extern "C" void (*pSwiftStaticClassrefConstructor)(void) =
+    &swift_resolve_static_objc_classrefs;
+#pragma comment( \
+    linker, "/include:" STRING(C_LABEL(pSwiftStaticClassrefConstructor)))
+#endif
+
