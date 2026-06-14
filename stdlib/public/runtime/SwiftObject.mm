@@ -234,10 +234,11 @@ static id _getClassDescription(Class cls) {
 @implementation SwiftObject
 + (void)initialize {
 #if SWIFT_HAS_ISA_MASKING && !TARGET_OS_SIMULATOR && !NDEBUG
-#if defined(_WIN32)
-  // HARMONY (W3): PE cannot bind the ADDRESS of another DLL's absolute
-  // symbol; libobjc2's value-holding data export carries the same truth
-  // (the 6i isa-mask pair).
+#if defined(_WIN32) || defined(__ANDROID__)
+  // HARMONY (W3 + Android): neither PE nor bionic can bind the ADDRESS of
+  // another module's ABSOLUTE symbol across the image boundary, so
+  // &objc_absolute_packed_isa_class_mask != SWIFT_ISA_MASK at runtime.
+  // libobjc2's value-holding data export carries the same truth (6i pair).
   uintptr_t libObjCMask = objc_debug_isa_class_mask;
 #else
   uintptr_t libObjCMask = (uintptr_t)&objc_absolute_packed_isa_class_mask;
