@@ -626,6 +626,11 @@ _swift_objcClassUsesNativeSwiftReferenceCounting(const Metadata *theClass) {
 
 #if defined(__x86_64__)
 static uintptr_t const objectPointerIsObjCBit = 0x4000000000000000ULL;
+#elif defined(__ANDROID__) && defined(__aarch64__)
+// Android aarch64 is-objc bit: top byte is TBI-reserved, so shift Apple's
+// bit 62 down by 8 -> bit 54, within the android spare-bits mask. Must match
+// Builtin.swift _objectPointerIsObjCBit + IRGen IsObjCPointerBit (android).
+static uintptr_t const objectPointerIsObjCBit = 0x0040000000000000ULL;
 #elif defined(__LP64__)
 static uintptr_t const objectPointerIsObjCBit = 0x4000000000000000ULL;
 #else

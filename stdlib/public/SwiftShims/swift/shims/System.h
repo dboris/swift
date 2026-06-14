@@ -176,11 +176,21 @@
 
 // ObjC weak reference discriminator is the high bit
 // reserved for ObjC tagged pointers plus the LSB.
+#if defined(__ANDROID__) && defined(__aarch64__)
+// Android aarch64 native weak-ref marker (WinCatalyst libobjc2 interop):
+// no ObjC tagged pointers (ObjCReservedBitsMask = 0) and the top byte is
+// TBI-reserved, so the Apple high-bit marker is outside the android
+// spare-bits mask. Use the lowest spare bit (bit 0) -- the upstream
+// formula with reserved=0 / num-reserved-low-bits=0.
+#define SWIFT_ABI_ARM64_OBJC_WEAK_REFERENCE_MARKER_MASK  0x0000000000000001ULL
+#define SWIFT_ABI_ARM64_OBJC_WEAK_REFERENCE_MARKER_VALUE 0x0000000000000001ULL
+#else
 #define SWIFT_ABI_ARM64_OBJC_WEAK_REFERENCE_MARKER_MASK  \
   (SWIFT_ABI_ARM64_OBJC_RESERVED_BITS_MASK |          \
    1<<SWIFT_ABI_ARM64_OBJC_NUM_RESERVED_LOW_BITS)
 #define SWIFT_ABI_ARM64_OBJC_WEAK_REFERENCE_MARKER_VALUE \
   (1<<SWIFT_ABI_ARM64_OBJC_NUM_RESERVED_LOW_BITS)
+#endif
 
 /*********************************** powerpc ********************************/
 
