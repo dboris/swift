@@ -128,6 +128,12 @@ public:
 #      define SWIFT_ISA_MASK 0x0000000ffffffff8ULL
 #      endif
 #    endif
+#  elif defined(__aarch64__)
+// WinCatalyst interop (Harmony): non-Darwin aarch64 (Linux/Android) over
+// libobjc2. Match libobjc2's objc_debug_isa_class_mask (third_party/libobjc2/
+// runtime.c) -- the same 47-bit value as x86_64, NOT Apple's narrow
+// device-arm64 masks above (which would corrupt valid class pointers).
+#    define SWIFT_ISA_MASK 0x00007ffffffffff8ULL
 #  elif __x86_64__
 #    define SWIFT_ISA_MASK 0x00007ffffffffff8ULL
 #  else
