@@ -156,6 +156,12 @@
 // so shift the spare bits tag to the second byte and zero the ObjC tag.
 #define SWIFT_ABI_ANDROID_ARM64_SWIFT_SPARE_BITS_MASK 0x00F0000000000007ULL
 #define SWIFT_ABI_ANDROID_ARM64_OBJC_RESERVED_BITS_MASK 0x0000000000000000ULL
+// WinCatalyst libobjc2 interop: Android aarch64 is-objc bit. The top byte is
+// TBI-reserved, so Apple's bit 62 is shifted down by 8 -> bit 54, within the
+// android spare-bits mask above and distinct from the BridgeObject tag bit (55).
+// Read by IRGen SwiftTargetInfo.cpp (triple.isAndroid() branch); must match
+// SwiftObject.mm objectPointerIsObjCBit + Builtin.swift _objectPointerIsObjCBit.
+#define SWIFT_ABI_ANDROID_ARM64_IS_OBJC_BIT 0x0040000000000000ULL
 
 #if defined(__ANDROID__) && defined(__aarch64__)
 #define SWIFT_ABI_ARM64_SWIFT_SPARE_BITS_MASK SWIFT_ABI_ANDROID_ARM64_SWIFT_SPARE_BITS_MASK

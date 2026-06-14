@@ -41,13 +41,18 @@ static void configureARM64(IRGenModule &IGM, const llvm::Triple &triple,
               SWIFT_ABI_ANDROID_ARM64_SWIFT_SPARE_BITS_MASK);
     setToMask(target.ObjCPointerReservedBits, 64,
               SWIFT_ABI_ANDROID_ARM64_OBJC_RESERVED_BITS_MASK);
+    // WinCatalyst libobjc2 interop: top byte is TBI-reserved, so the is-objc bit
+    // is Apple's bit 62 >> 8 = bit 54. Must match SwiftObject.mm objectPointerIsObjCBit
+    // and Builtin.swift _objectPointerIsObjCBit (android branch).
+    setToMask(target.IsObjCPointerBit, 64,
+              SWIFT_ABI_ANDROID_ARM64_IS_OBJC_BIT);
   } else {
     setToMask(target.PointerSpareBits, 64,
               SWIFT_ABI_ARM64_SWIFT_SPARE_BITS_MASK);
     setToMask(target.ObjCPointerReservedBits, 64,
               SWIFT_ABI_ARM64_OBJC_RESERVED_BITS_MASK);
+    setToMask(target.IsObjCPointerBit, 64, SWIFT_ABI_ARM64_IS_OBJC_BIT);
   }
-  setToMask(target.IsObjCPointerBit, 64, SWIFT_ABI_ARM64_IS_OBJC_BIT);
 
   // Non-embedded Darwin reserves the low 4GB of address space.
   if (triple.isOSDarwin() &&
