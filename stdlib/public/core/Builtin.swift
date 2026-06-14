@@ -469,7 +469,14 @@ internal var _objectPointerLowSpareBitShift: UInt {
 internal var _objectPointerIsObjCBit: UInt {
   @inline(__always) get {
 #if _pointerBitWidth(_64)
+#if os(Android) && arch(arm64)
+    // WinCatalyst libobjc2 interop: top byte is TBI-reserved, so the is-objc
+    // bit is Apple's bit 62 >> 8 = bit 54. Must match SwiftObject.mm
+    // objectPointerIsObjCBit + IRGen SwiftTargetInfo.cpp IsObjCPointerBit.
+    return 0x0040_0000_0000_0000
+#else
     return 0x4000_0000_0000_0000
+#endif
 #elseif _pointerBitWidth(_32)
     return 0x0000_0002
 #elseif _pointerBitWidth(_16)
