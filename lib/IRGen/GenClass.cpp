@@ -2394,6 +2394,23 @@ namespace {
       case llvm::Triple::XCOFF:
       case llvm::Triple::COFF:
         var->setSection(".data");
+        // HARMONY (win-catalyst lesson #143): a WeakAnyLinkage ObjC protocol
+        // record (_PROTOCOL_<P>, _PROTOCOL_INSTANCE_METHODS_<P>,
+        // _PROTOCOL_PROPERTIES_<P>, _PROTOCOL_METHOD_TYPES_<P>, ...) is
+        // re-emitted by every TU that adopts an @objc protocol -- a conforming
+        // class re-emits its inherited protocols (e.g. NSObject).  On COFF a
+        // weak global with no comdat lowers to a weak EXTERNAL plus a per-TU
+        // `.weak.<sym>.default.<TU>` companion, which lld-link does NOT fold
+        // across TUs -> "duplicate symbol _PROTOCOL_<P>" when two TUs each
+        // conform (or one TU conforms to a protocol with an inheritance chain).
+        // Put each record in its own COMDAT (selection ANY) so the linker folds
+        // the ODR-identical copies -- the same foldable scheme clang's
+        // CGObjCGNUstep2 uses for its `$_OBJC_PROTOCOL_*` records (external
+        // linkage + .objcrt$PCL + setComdat).  Scoped to weak linkage so the
+        // class/category metadata that shares this builder (internalLinkage) is
+        // untouched.  COFF-only: ELF/Mach-O coalesce weak defs natively.
+        if (linkage == llvm::GlobalVariable::WeakAnyLinkage)
+          var->setComdat(IGM.Module.getOrInsertComdat(var->getName()));
         break;
       case llvm::Triple::ELF:
       case llvm::Triple::Wasm:

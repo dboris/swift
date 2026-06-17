@@ -371,6 +371,14 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
   protocolLabel->setVisibility(llvm::GlobalValue::HiddenVisibility);
   protocolLabel->setSection(GetObjCSectionName("__objc_protolist",
                                                "coalesced,no_dead_strip"));
+  // HARMONY (win-catalyst lesson #143): the protocol-list label is a weak
+  // global re-emitted by every TU adopting the protocol; on COFF a weak global
+  // with no comdat is a non-foldable weak EXTERNAL -> "duplicate symbol
+  // l_OBJC_LABEL_PROTOCOL_$_<P>".  COMDAT it (selection ANY) so lld-link folds
+  // the identical copies, matching the protocol-record fold in GenClass.cpp's
+  // buildGlobalVariable.  COFF-only: ELF/Mach-O coalesce weak defs natively.
+  if (TargetInfo.OutputObjectFormat == llvm::Triple::COFF)
+    protocolLabel->setComdat(Module.getOrInsertComdat(protocolLabel->getName()));
 
   // Mark used to prevent DCE of public unreferenced protocols to ensure
   // that they are available for external use when a used module is used
@@ -387,6 +395,11 @@ IRGenModule::getObjCProtocolGlobalVars(ProtocolDecl *proto) {
   protocolRef->setVisibility(llvm::GlobalValue::HiddenVisibility);
   protocolRef->setSection(GetObjCSectionName("__objc_protorefs",
                                              "coalesced,no_dead_strip"));
+  // HARMONY (win-catalyst lesson #143): same COFF weak-external fold as the
+  // protocol-list label above ("duplicate symbol
+  // l_OBJC_PROTOCOL_REFERENCE_$_<P>").  COFF-only.
+  if (TargetInfo.OutputObjectFormat == llvm::Triple::COFF)
+    protocolRef->setComdat(Module.getOrInsertComdat(protocolRef->getName()));
 
   // Mark used to prevent DCE of public unreferenced protocols to ensure
   // that they are available for external use when a used module is used
