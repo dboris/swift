@@ -2367,7 +2367,7 @@ namespace {
                                             MangledTypeRefRole::Metadata)
                                .first);
 
-        // HARMONY (WALL C, superclass linkage): on COFF interop, a Swift class
+        // HARMONY (static-class interop, superclass linkage): on COFF interop, a Swift class
         // whose superclass is an imported ObjC class resolves that superclass
         // at runtime from the mangled name emitted just above, via
         // objc_getClass(<name>) in the runtime's getSuperclassMetadata(). That
@@ -2377,7 +2377,7 @@ namespace {
         // link symbol (the superclass is just a mangled string), so a
         // STATICALLY-linked superclass (e.g. uikit.lib's UIResponder) is never
         // pulled and never registers. Touch getAddrOfObjCClass for its anchor
-        // side effect: it force-includes $_OBJC_CLASS_<name> (the WALL C
+        // side effect: it force-includes $_OBJC_CLASS_<name> (the static-class interop
         // classref mechanism), pulling the TU so the class registers before any
         // metadata instantiation. A DLL superclass (e.g. NSObject) harmlessly
         // falls back through the paired /alternatename. (DLL classes + Swift

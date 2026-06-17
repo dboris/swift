@@ -4958,7 +4958,7 @@ getAddrOfHarmonyPEObjCClassAnchor(IRGenModule &IGM, ClassDecl *theClass,
   gv->setSection(isMetaclass ? ".hmny_manchor$B" : ".hmny_canchor$B");
   gv->setAlignment(llvm::MaybeAlign(IGM.getPointerAlignment().getValue()));
 
-  // HARMONY (WALL C STAGE 3, LINKAGE): a Swift Darwin-ABI classref to an
+  // HARMONY (static-class interop stage 3, LINKAGE): a Swift Darwin-ABI classref to an
   // imported ObjC class creates NO strong link reference, so a STATICALLY-linked
   // class's registration TU is never pulled -- its gnustep .CRT$XCLz ctor never
   // runs and the .CRT$XCT anchor resolver finds the class unregistered (the
