@@ -2366,6 +2366,29 @@ namespace {
         B.addRelativeAddress(IGM.getTypeRef(superclassType, genericSig,
                                             MangledTypeRefRole::Metadata)
                                .first);
+
+        // HARMONY (WALL C, superclass linkage): on COFF interop, a Swift class
+        // whose superclass is an imported ObjC class resolves that superclass
+        // at runtime from the mangled name emitted just above, via
+        // objc_getClass(<name>) in the runtime's getSuperclassMetadata(). That
+        // lookup returns null -- a fatal "failed to demangle superclass"
+        // abort -- unless the superclass's gnustep registration TU was linked.
+        // Unlike a classref/message, a Swift subclass reference emits no strong
+        // link symbol (the superclass is just a mangled string), so a
+        // STATICALLY-linked superclass (e.g. uikit.lib's UIResponder) is never
+        // pulled and never registers. Touch getAddrOfObjCClass for its anchor
+        // side effect: it force-includes $_OBJC_CLASS_<name> (the WALL C
+        // classref mechanism), pulling the TU so the class registers before any
+        // metadata instantiation. A DLL superclass (e.g. NSObject) harmlessly
+        // falls back through the paired /alternatename. (DLL classes + Swift
+        // superclasses are unaffected: the former register via their DLL, the
+        // latter have no clang node.)
+        if (IGM.ObjCInterop &&
+            IGM.TargetInfo.OutputObjectFormat == llvm::Triple::COFF) {
+          if (auto *superDecl = getType()->getSuperclassDecl())
+            if (superDecl->hasClangNode() && !superDecl->isForeign())
+              (void)IGM.getAddrOfObjCClass(superDecl, NotForDefinition);
+        }
       } else {
         B.addInt32(0);
       }
