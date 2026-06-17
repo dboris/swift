@@ -398,7 +398,7 @@ extern "C" void (*pSwiftImageConstructor)(void) = &swift_image_constructor;
 #pragma comment(linker, "/include:" STRING(C_LABEL(pSwiftImageConstructor)))
 
 #if SWIFT_OBJC_INTEROP
-// HARMONY (WALL C, spike-23 STAGE 3): a SECOND, LATER pass that resolves the
+// HARMONY (static-class interop, spike-23 STAGE 3): a SECOND, LATER pass that resolves the
 // eager .objc_classrefs / .objc_superrefs anchor slots for STATICALLY-LINKED
 // imported ObjC classes -- the case swift_image_constructor (.CRT$XCIS) cannot
 // handle.  Why a second ctor: clang emits each gnustep ObjC class's
