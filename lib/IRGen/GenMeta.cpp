@@ -2379,15 +2379,31 @@ namespace {
         // pulled and never registers. Touch getAddrOfObjCClass for its anchor
         // side effect: it force-includes $_OBJC_CLASS_<name> (the static-class interop
         // classref mechanism), pulling the TU so the class registers before any
-        // metadata instantiation. A DLL superclass (e.g. NSObject) harmlessly
-        // falls back through the paired /alternatename. (DLL classes + Swift
-        // superclasses are unaffected: the former register via their DLL, the
-        // latter have no clang node.)
+        // metadata instantiation. A DLL superclass (e.g. NSObject) falls back
+        // through the paired /alternatename to the objc4-spelled anchor
+        // (OBJC_CLASS_$_<name>) the same call defines. (Swift superclasses are
+        // unaffected: they have no clang node.)
+        //
+        // BUT that anchor is linkonce_odr and, in THIS path, otherwise
+        // unreferenced (no classref slot points at it -- the subclass is never
+        // instantiated, only inherited from), so codegen DROPS it as dead and
+        // the /alternatename target goes undefined: a Swift @objc class whose
+        // DIRECT superclass is the DLL-resident NSObject then fails to link
+        // ("undefined symbol: $_OBJC_CLASS_NSObject"). A class that IS
+        // instantiated keeps its anchor via its .objc_classrefs slot, which is
+        // why a Foundation app that constructs its NSObject subclass links fine.
+        // Retain the anchor explicitly (llvm.used -> a COFF /INCLUDE keeping the
+        // linkonce_odr definition) so the /alternatename target always exists;
+        // the swiftrt resolver then binds it via objc_lookUpClass like any other.
         if (IGM.ObjCInterop &&
             IGM.TargetInfo.OutputObjectFormat == llvm::Triple::COFF) {
           if (auto *superDecl = getType()->getSuperclassDecl())
-            if (superDecl->hasClangNode() && !superDecl->isForeign())
-              (void)IGM.getAddrOfObjCClass(superDecl, NotForDefinition);
+            if (superDecl->hasClangNode() && !superDecl->isForeign()) {
+              auto *anchor = IGM.getAddrOfObjCClass(superDecl, NotForDefinition);
+              if (auto *gv = dyn_cast<llvm::GlobalVariable>(
+                      anchor->stripPointerCasts()))
+                IGM.addUsedGlobal(gv);
+            }
         }
       } else {
         B.addInt32(0);
