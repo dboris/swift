@@ -2273,6 +2273,10 @@ private:
   std::string ResourceDir;
   std::string ModuleCachePath;
   bool DisableFailOnError;
+  // Explicit ObjC-interop toggles (WinCatalyst Track-2 enabler). When neither
+  // is set, prepareForDump keeps the historical Target.isOSDarwin() default.
+  bool EnableObjCInterop;
+  bool DisableObjCInterop;
   std::vector<std::string> ClangImporterArgs;
 
 public:
@@ -2280,6 +2284,30 @@ public:
       : MainExecutablePath(ExecPath), Table(createSwiftOptTable()) {}
 
   int parseArgs(ArrayRef<const char *> Args) {
+    // WinCatalyst Track-2 enabler: the digester's curated option table does not
+    // expose -enable-objc-interop / -disable-objc-interop (they are
+    // FrontendOptions without SwiftAPIDigesterOption visibility), but importing
+    // ObjC-backed modules (UIKit/Foundation/...) for a non-Darwin target -- whose
+    // interop default is OFF, e.g. WinCatalyst's windows-msvc / gnustep triple --
+    // requires it. Intercept them from the raw args here and filter them out so
+    // ParseArgs does not reject them as unknown; prepareForDump applies
+    // EnableObjCInterop below. This is done in the tool TU rather than via a
+    // SwiftAPIDigesterOption flag in Options.td deliberately: touching Options.td
+    // regenerates Options.inc and recompiles the whole frontend, which perturbs
+    // its release-build static-init link order and trips a latent init-order
+    // double-free -- so we keep the option table (and thus the binary's link)
+    // untouched and handle the flag out-of-band.
+    EnableObjCInterop = false;
+    DisableObjCInterop = false;
+    SmallVector<const char *, 64> FilteredArgs;
+    for (const char *A : Args) {
+      StringRef S(A);
+      if (S == "-enable-objc-interop") { EnableObjCInterop = true; continue; }
+      if (S == "-disable-objc-interop") { DisableObjCInterop = true; continue; }
+      FilteredArgs.push_back(A);
+    }
+    Args = FilteredArgs;
+
     unsigned MissingIndex;
     unsigned MissingCount;
     llvm::opt::InputArgList ParsedArgs = Table->ParseArgs(
@@ -2379,6 +2407,8 @@ public:
     ClangImporterArgs = ParsedArgs.getAllArgValues(OPT_Xcc);
     DebugMapping = ParsedArgs.hasArg(OPT_debug_mapping);
     DisableFailOnError = ParsedArgs.hasArg(OPT_disable_fail_on_error);
+    // EnableObjCInterop / DisableObjCInterop are set from the raw args at the top
+    // of parseArgs (the option table does not carry these flags -- see there).
 
     CheckerOpts.AvoidLocation = ParsedArgs.hasArg(OPT_avoid_location);
     CheckerOpts.AvoidToolArgs = ParsedArgs.hasArg(OPT_avoid_tool_args);
@@ -2453,9 +2483,18 @@ public:
     if (!Triple.empty())
       InitInvoke.setTargetTriple(Triple);
 
-    // Ensure the tool works on linux properly
-    InitInvoke.getLangOptions().EnableObjCInterop =
-        InitInvoke.getLangOptions().Target.isOSDarwin();
+    // Ensure the tool works on linux properly. An explicit
+    // -enable-objc-interop / -disable-objc-interop wins over the default so the
+    // digester can dump ObjC-backed modules for non-Darwin targets whose interop
+    // default is OFF (WinCatalyst's windows-msvc / gnustep targets). Without an
+    // explicit flag we keep the historical Darwin-only default.
+    if (EnableObjCInterop)
+      InitInvoke.getLangOptions().EnableObjCInterop = true;
+    else if (DisableObjCInterop)
+      InitInvoke.getLangOptions().EnableObjCInterop = false;
+    else
+      InitInvoke.getLangOptions().EnableObjCInterop =
+          InitInvoke.getLangOptions().Target.isOSDarwin();
     InitInvoke.getClangImporterOptions().ModuleCachePath = ModuleCachePath;
 
     // Pass -Xcc arguments to the Clang importer
