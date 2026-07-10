@@ -24,12 +24,32 @@ option(SWIFT_RUNTIME_DYLD_SHARED_CACHE_COMPATIBLE
        allows inclusion in the dyld shared cache"
        FALSE)
 
+# WinCatalyst Darwin-host: only stamp the dyld-shared-cache flag onto the GLOBAL
+# runtime link flags when a Darwin SDK is actually being built (else it leaks onto a
+# cross Linux link from a macOS host).
+set(_wincat_building_darwin_target FALSE)
+foreach(_wincat_sdk ${SWIFT_SDKS})
+  if("${_wincat_sdk}" IN_LIST SWIFT_DARWIN_PLATFORMS)
+    set(_wincat_building_darwin_target TRUE)
+  endif()
+endforeach()
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND
+   _wincat_building_darwin_target AND
    LLVM_LINKER_IS_APPLE AND
    NOT SWIFT_RUNTIME_DYLD_SHARED_CACHE_COMPATIBLE)
   set(shared_cache_link_flags "LINKER:-not_for_dyld_shared_cache")
   list(APPEND SWIFT_RUNTIME_LINK_FLAGS ${shared_cache_link_flags})
   list(APPEND SWIFT_RUNTIME_SWIFT_LINK_FLAGS ${shared_cache_link_flags})
+endif()
+
+# WinCatalyst Darwin-host: force the ELF -shared create-rule for a non-Darwin cross target.
+# CMAKE_SHARED_LIBRARY_CREATE_*_FLAGS is -dynamiclib on a macOS host (set by the Darwin
+# platform module); that is an ld64 flag lld rejects for an ELF .so (it then wants `main`).
+# Set here (stdlib directory scope, before the library subdirs) so it reaches every stdlib
+# shared library; child scopes inherit it. _wincat_building_darwin_target is computed above.
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND NOT _wincat_building_darwin_target)
+  set(CMAKE_SHARED_LIBRARY_CREATE_C_FLAGS "-shared")
+  set(CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS "-shared")
 endif()
 
 # Build the runtime with -Wall to catch, e.g., uninitialized variables
