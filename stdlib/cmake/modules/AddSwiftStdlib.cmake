@@ -2666,6 +2666,16 @@ function(add_swift_target_library name)
         list(APPEND swiftlib_link_flags_all "-Wl,-z,max-page-size=16384")
       endif()
 
+      # WinCatalyst Darwin-host LINUX cross: the same macOS-host hack as ANDROID
+      # above. The LINUX branch sets NO_SONAME (suppressing the Darwin
+      # -install_name CMake would inject), which on ELF ALSO drops the soname --
+      # consumers then record path-carrying DT_NEEDED entries and the binary
+      # only loads from an exactly-mirrored directory layout. Name it explicitly.
+      # Host-gated: a native Linux build keeps CMake's own soname handling.
+      if(SWIFTLIB_SHARED AND sdk STREQUAL "LINUX" AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "LINUX")
+        list(APPEND swiftlib_link_flags_all "-Wl,-soname,lib${name}.so")
+      endif()
+
       # This is a Android-specific hack till we transition the stdlib fully to versioned triples.
       if(sdk STREQUAL "ANDROID" AND name STREQUAL "swiftSwiftReflectionTest")
         list(APPEND swiftlib_swift_compile_flags_all "-target" "${SWIFT_SDK_ANDROID_ARCH_${arch}_TRIPLE}${SWIFT_ANDROID_API_LEVEL}")
