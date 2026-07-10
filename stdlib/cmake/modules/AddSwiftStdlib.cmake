@@ -384,7 +384,11 @@ function(_add_target_variant_c_compile_flags)
 
   if(NOT SWIFT_STDLIB_ENABLE_OBJC_INTEROP)
     list(APPEND result "-DSWIFT_OBJC_INTEROP=0")
-  elseif(NOT "${CFLAGS_SDK}" MATCHES "OSX|IOS|TVOS|WATCHOS|XROS")
+  # HARMONY (Darwin-host fix): POSITIVE match on the gnustep platforms.
+  # A negative "NOT OSX|IOS|..." match wrongly caught freestanding/embedded
+  # Mach-O sub-targets on a Darwin host (gnustep-3.0 is incompatible with
+  # Mach-O); the allowlist also keeps Darwin->Linux/Android cross targets right.
+  elseif("${CFLAGS_SDK}" MATCHES "LINUX|ANDROID|WINDOWS|FREEBSD|OPENBSD|HAIKU|CYGWIN")
     # HARMONY (slice 6h): on non-Apple targets, Runtime/Config.h defaults the
     # macro to 0, so merely OMITTING -DSWIFT_OBJC_INTEROP=0 (all the option
     # used to do) was a silent no-op -- slice 5 enabled the option and the

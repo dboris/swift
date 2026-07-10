@@ -118,7 +118,13 @@ OBJC_EXPORT const struct { char c; } objc_absolute_packed_isa_class_mask;
           ".globl \"OBJC_METACLASS_$_" #name "\"\n"                            \
           ".set \"OBJC_METACLASS_$_" #name "\", ._OBJC_METACLASS_" #name "\n")
 #else
-#define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)
+// HARMONY: the real objc4 runtime provides the OBJC_CLASS_$_ /
+// OBJC_METACLASS_$_ names for swiftc-emitted classes on Darwin, so no alias
+// is needed. Give the macro a static_assert body (like the COFF branch) so
+// the trailing ';' at the call site is not an extra-semi error -- the Darwin
+// stdlib build promotes -Wc++98-compat-extra-semi to -Werror.
+#define SWIFT_HARMONY_OBJC4_CLASS_ALIAS(name)                                  \
+  static_assert(true, "objc4 owns the objc4 class names natively on Darwin")
 #endif
 
 // HARMONY (slice 6i): objc4 SPI that the runtime consults through
