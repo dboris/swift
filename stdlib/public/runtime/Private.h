@@ -131,9 +131,15 @@ public:
 #  elif defined(__aarch64__)
 // WinCatalyst interop (Harmony): non-Darwin aarch64 (Linux/Android) over
 // libobjc2. Match libobjc2's objc_debug_isa_class_mask (third_party/libobjc2/
-// runtime.c) -- the same 47-bit value as x86_64, NOT Apple's narrow
-// device-arm64 masks above (which would corrupt valid class pointers).
-#    define SWIFT_ISA_MASK 0x00007ffffffffff8ULL
+// runtime.c). NOT Apple's narrow device-arm64 masks above (which would
+// corrupt valid class pointers), and NOT the x86_64 47-bit value either: a
+// stock 48-bit-VA aarch64 Linux kernel maps shared objects at
+// 0x0000ffff_xxxxxxxx (bit 47 set) and LVA kernels reach bit 51, so the
+// 47-bit mask strips real pointer bits and the first masked isa load faults
+// (first seen on an Apple-Silicon Linux VM; qemu-user and 39-bit-VA Android
+// never expose it). libobjc2 isas are plain pointers -- the truthful mask
+// only clears the low alignment bits.
+#    define SWIFT_ISA_MASK 0xfffffffffffffff8ULL
 #  elif __x86_64__
 #    define SWIFT_ISA_MASK 0x00007ffffffffff8ULL
 #  else
