@@ -767,7 +767,9 @@ function(_add_target_variant_link_flags)
   # TODO: Evaluate/enable -f{function,data}-sections --gc-sections for bfd,
   # gold, and lld.
   if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    # WinCatalyst Darwin-host: gate on the TARGET SDK, not the host CMAKE_SYSTEM_NAME
+    # (-dead_strip is a Mach-O ld64 flag; a macOS host must not stamp it on a Linux link).
+    if("${LFLAGS_SDK}" IN_LIST SWIFT_DARWIN_PLATFORMS)
       # See rdar://48283130: This gives 6MB+ size reductions for swift and
       # SourceKitService, and much larger size reductions for sil-opt etc.
       list(APPEND result "-Wl,-dead_strip")
@@ -1457,6 +1459,11 @@ function(add_swift_target_library_single target name)
     set_target_properties("${target}"
       PROPERTIES
       INSTALL_RPATH "$ORIGIN")
+    # WinCatalyst Darwin-host: CMAKE_SHARED_LIBRARY_SUFFIX is the HOST's (.dylib on a
+    # macOS host); force the ELF shared-library name so libswiftCore is lib*.so.
+    if(libkind STREQUAL "SHARED")
+      set_target_properties("${target}" PROPERTIES PREFIX "lib" SUFFIX ".so" NO_SONAME TRUE)
+    endif()
   elseif("${SWIFTLIB_SINGLE_SDK}" STREQUAL "CYGWIN")
     set_target_properties("${target}"
       PROPERTIES

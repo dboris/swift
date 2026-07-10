@@ -1384,6 +1384,15 @@ if(swift_build_wasm AND NOT "${SWIFT_HOST_VARIANT_SDK}" STREQUAL "WASI")
   configure_sdk_unix(WASI wasm32)
 endif()
 
+# WinCatalyst Darwin-host: cross-compile the standard library for Linux
+is_sdk_requested(LINUX swift_build_linux)
+if(swift_build_linux AND NOT "${SWIFT_HOST_VARIANT_SDK}" STREQUAL "LINUX")
+  if("${SWIFT_SDK_LINUX_ARCHITECTURES}" STREQUAL "")
+    set(SWIFT_SDK_LINUX_ARCHITECTURES x86_64;aarch64)
+  endif()
+  configure_sdk_unix("Linux" "${SWIFT_SDK_LINUX_ARCHITECTURES}")
+endif()
+
 if("${SWIFT_SDKS}" STREQUAL "")
   set(SWIFT_SDKS "${SWIFT_CONFIGURED_SDKS}")
 endif()
