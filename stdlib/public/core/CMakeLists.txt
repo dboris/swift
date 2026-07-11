@@ -326,6 +326,15 @@ elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "LINUX")
     list(APPEND swift_core_link_flags "-L${SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR}")
     list(APPEND swift_core_private_link_libraries "objc")
   endif()
+elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "ANDROID")
+  # HARMONY (Mac-hosted SDK fan-out): the ANDROID arm of the slice-6i libobjc
+  # link -- same shape as the LINUX arm above.  A linux-host android cross rode
+  # the LINUX arm via its host PRIMARY_VARIANT; a Darwin-host android cross
+  # sets PRIMARY_VARIANT_SDK=ANDROID and needs this arm explicitly.
+  if(SWIFT_STDLIB_ENABLE_OBJC_INTEROP AND SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR)
+    list(APPEND swift_core_link_flags "-L${SWIFT_STDLIB_OBJC_INTEROP_LIB_DIR}")
+    list(APPEND swift_core_private_link_libraries "objc")
+  endif()
 elseif(SWIFT_PRIMARY_VARIANT_SDK STREQUAL "WINDOWS")
   list(APPEND swift_core_private_link_libraries shell32;DbgHelp;Synchronization)
   # HARMONY (W3): the Windows arm of the slice-6i libobjc link.  The DLL
