@@ -873,6 +873,19 @@ private:
       return AvailabilityQuery::dynamic(domain, primaryRange, std::nullopt);
 
     case AvailabilityDomain::Kind::Platform:
+      // WinCatalyst identity: the platform (iOS) OS version is FIXED at the
+      // declared deployment floor -- there is no newer runtime OS to discover on
+      // the underlying windows/linux/android host -- so fold a platform query to
+      // a compile-time constant against the floor rather than emitting a runtime
+      // check. A dynamic check would lower to the non-Darwin availability runtime
+      // (which answers "true"), resurrecting the newest-API (#available(iOS
+      // 18/26,*)) branches FluentUI must NOT take. variantRange only exists when
+      // zippered with -target-variant, which WinCatalyst identity never sets.
+      if (Context.LangOpts.WinCatalystIdentity && primaryRange && !variantRange) {
+        bool available =
+            Context.LangOpts.getMinPlatformVersion() >= spec.getRuntimeVersion();
+        return AvailabilityQuery::constant(domain, available);
+      }
       // Platform and Swift runtime checks are always dynamic. The SIL optimizer
       // is responsible eliminating these checks when it can prove that they can
       // never fail (due to the deployment target). We can't perform that
