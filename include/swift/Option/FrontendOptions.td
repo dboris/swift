@@ -892,6 +892,17 @@ def downgrade_typecheck_interface_error : Flag<["-"], "downgrade-typecheck-inter
 def enable_volatile_modules : Flag<["-"], "enable-volatile-modules">,
   HelpText<"Load Swift modules in memory">;
 
+def wincatalyst_identity : Flag<["-"], "wincatalyst-identity">,
+  HelpText<"WinCatalyst: make Swift source see an iOS platform identity "
+           "(os(iOS)=true, os(Windows)/os(Linux)/os(Android)=false, "
+           "targetEnvironment(wincatalyst)=true, #available folded to an iOS "
+           "deployment floor) WITHOUT changing the codegen triple. SDK-baked, "
+           "opt-in via the Swift SDK toolset">;
+
+def wincatalyst_deployment_version : Separate<["-"], "wincatalyst-deployment-version">,
+  HelpText<"WinCatalyst: the iOS deployment-target version #available/#unavailable "
+           "fold against under -wincatalyst-identity (default 17.0)">;
+
 def solver_memory_threshold_EQ : Joined<["-"], "solver-memory-threshold=">,
   HelpText<"Set the upper bound for memory consumption, in bytes, by the constraint solver">;
 

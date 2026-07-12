@@ -697,11 +697,37 @@ namespace swift {
     /// The second element is true if the Arch was invalid.
     std::pair<bool, bool> setTarget(llvm::Triple triple);
 
+    /// WinCatalyst identity: when set (via -wincatalyst-identity), the Swift
+    /// SOURCE sees an iOS platform identity -- os(iOS)=true, os(Windows)/
+    /// os(Linux)/os(Android)=false, targetEnvironment(wincatalyst)=true, and
+    /// #available/#unavailable folded against WinCatalystDeploymentVersion --
+    /// WITHOUT changing the codegen Target triple. This lets the same
+    /// Windows/Linux/Android toolchain + prebuilt modules back an iOS-shaped
+    /// source view (the fluentui-apple port; slice-0 "Half A"). It is an SDK-
+    /// baked, per-build opt-in (never a global flip). See
+    /// docs/handoffs/2026-07-10-fluentui-apple-port-plan.md.
+    bool WinCatalystIdentity = false;
+
+    /// The iOS deployment-target version #available folds against under
+    /// WinCatalystIdentity (decision 2: floor = iOS 17, SDK-declarable so it can
+    /// ratchet up later via -wincatalyst-deployment-version).
+    llvm::VersionTuple WinCatalystDeploymentVersion = llvm::VersionTuple(17, 0);
+
+    /// Apply the WinCatalyst identity override to the platform-condition set.
+    /// Call AFTER setTarget(): it replaces the triple-derived OS condition with
+    /// "iOS" and adds the "wincatalyst" targetEnvironment.
+    void applyWinCatalystIdentityOverride();
+
     /// Returns the minimum platform version to which code will be deployed.
     ///
     /// This is only implemented on certain OSs. If no target has been
     /// configured, returns v0.0.0.
     llvm::VersionTuple getMinPlatformVersion() const {
+      // Under WinCatalyst identity the availability platform is iOS, so
+      // #available folds against the declared iOS deployment floor rather than
+      // the (windows/linux/android) codegen triple's version (v0.0.0).
+      if (WinCatalystIdentity)
+        return WinCatalystDeploymentVersion;
       return getVersionForTriple(Target);
     }
 

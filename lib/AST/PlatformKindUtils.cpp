@@ -183,6 +183,22 @@ static bool isPlatformActiveForTarget(PlatformKind Platform,
 
 bool swift::isPlatformActive(PlatformKind Platform, const LangOptions &LangOpts,
                              bool ForTargetVariant, bool ForRuntimeQuery) {
+  // WinCatalyst identity: the active availability platform is iOS regardless of
+  // the (windows/linux/android) codegen triple. Without this, spec matching keys
+  // off Target.isiOS() (false), so every #available(iOS N,*) would fall through
+  // to the '*' wildcard and fold to always-true -- resurrecting the newest-API
+  // paths FluentUI must avoid. Paired with targetPlatform()==iOS and the iOS
+  // deployment floor. WinCatalyst identity never sets a -target-variant.
+  if (LangOpts.WinCatalystIdentity && !ForTargetVariant) {
+    if (Platform == PlatformKind::none)
+      return true;
+    if (!LangOpts.EnableAppExtensionRestrictions &&
+        isApplicationExtensionPlatform(Platform))
+      return false;
+    return Platform == PlatformKind::iOS ||
+           Platform == PlatformKind::iOSApplicationExtension;
+  }
+
   if (ForTargetVariant) {
     assert(LangOpts.TargetVariant && "Must have target variant triple");
     return isPlatformActiveForTarget(Platform, *LangOpts.TargetVariant,
@@ -237,6 +253,13 @@ static PlatformKind platformForTriple(const llvm::Triple &triple,
 }
 
 PlatformKind swift::targetPlatform(const LangOptions &LangOpts) {
+  // WinCatalyst identity: the availability/platform-attribute platform is iOS
+  // even though the codegen triple is windows/linux/android, so @available(iOS)
+  // and #available(iOS N,*) resolve against the iOS deployment floor
+  // (LangOptions::getMinPlatformVersion under the same flag). See the
+  // fluentui-apple port plan slice-0 "Half A".
+  if (LangOpts.WinCatalystIdentity)
+    return PlatformKind::iOS;
   return platformForTriple(LangOpts.Target,
                            LangOpts.EnableAppExtensionRestrictions);
 }

@@ -1659,6 +1659,22 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
   bool UnsupportedOS, UnsupportedArch;
   std::tie(UnsupportedOS, UnsupportedArch) = Opts.setTarget(Target);
 
+  // WinCatalyst identity (SDK-baked, opt-in): override the triple-derived
+  // platform identity so the Swift source sees iOS -- applied AFTER setTarget so
+  // it replaces the just-populated OS/targetEnvironment conditions. The codegen
+  // Target is untouched. See docs/handoffs/2026-07-10-fluentui-apple-port-plan.md.
+  Opts.WinCatalystIdentity |= Args.hasArg(OPT_wincatalyst_identity);
+  if (const Arg *A = Args.getLastArg(OPT_wincatalyst_deployment_version)) {
+    llvm::VersionTuple vers;
+    if (vers.tryParse(A->getValue()))
+      Diags.diagnose(SourceLoc(), diag::error_invalid_arg_value,
+                     A->getAsString(Args), A->getValue());
+    else
+      Opts.WinCatalystDeploymentVersion = vers;
+  }
+  if (Opts.WinCatalystIdentity)
+    Opts.applyWinCatalystIdentityOverride();
+
   SmallVector<StringRef, 3> TargetComponents;
   TargetArg.split(TargetComponents, "-");
 

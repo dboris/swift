@@ -26,6 +26,7 @@
 #include "swift/Config.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/raw_ostream.h"
 #include <limits.h>
@@ -126,6 +127,9 @@ static const SupportedConditionalValue SupportedConditionalCompilationTargetEnvi
   "simulator",
   { "macabi", "macCatalyst" },
   "macCatalyst", // A synonym for "macabi" when compiling for iOS
+  "wincatalyst", // WinCatalyst identity escape hatch (the macCatalyst precedent):
+                 // added under -wincatalyst-identity so an iOS-shaped source can
+                 // opt back into WinCatalyst-only code paths.
 };
 
 static const SupportedConditionalValue SupportedConditionalCompilationPtrAuthSchemes[] = {
@@ -705,6 +709,24 @@ std::pair<bool, bool> LangOptions::setTarget(llvm::Triple triple) {
   // in the common case.
 
   return { false, false };
+}
+
+void LangOptions::applyWinCatalystIdentityOverride() {
+  // Make the SOURCE-visible platform identity iOS without touching the codegen
+  // Target triple. Called after setTarget(), so the triple-derived OS condition
+  // (Windows/Linux/Android) is already in PlatformConditionValues -- drop it and
+  // any stale targetEnvironment, then assert the iOS identity.
+  auto &pcv = PlatformConditionValues;
+  llvm::erase_if(pcv, [](const std::pair<PlatformConditionKind, std::string> &e) {
+    return e.first == PlatformConditionKind::OS ||
+           e.first == PlatformConditionKind::TargetEnvironment;
+  });
+  addPlatformConditionValue(PlatformConditionKind::OS, "iOS");
+  // The opt-in escape hatch (the macCatalyst "macabi" precedent): lets an
+  // iOS-shaped source reach WinCatalyst-only paths via
+  // targetEnvironment(wincatalyst).
+  addPlatformConditionValue(PlatformConditionKind::TargetEnvironment,
+                            "wincatalyst");
 }
 
 llvm::StringRef swift::getPlaygroundOptionName(PlaygroundOption option) {
