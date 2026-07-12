@@ -442,6 +442,19 @@ IRGenModule::getObjCProtocolRefSymRefDescriptor(ProtocolDecl *protocol) {
   protocolSymRef->setAlignment(
       llvm::MaybeAlign(getPointerAlignment().getValue()));
   protocolSymRef->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  // HARMONY (win-catalyst lesson #143, SYMREF variant): this linkonce protocol
+  // symref descriptor is re-emitted by every TU that references the @objc
+  // protocol as a type (e.g. `[MTLBuffer]` / `MTLTexture?` in two files of one
+  // module); on COFF a linkonce global with no comdat is a non-foldable weak
+  // external -> "duplicate symbol l_OBJC_PROTOCOL_SYMREF_$_<P>". COMDAT it
+  // (selection ANY) so lld-link folds the ODR-identical copies, matching the
+  // protocol label/reference fold above. COFF-only: ELF/Mach-O coalesce weak
+  // defs natively. Surfaced by Mooncraft's Metal renderer (MoonRenderer.swift
+  // declares [MTLBuffer]/MTLTexture stored properties, MoonRenderer+Metal.swift
+  // uses them) — the first multi-TU Swift consumer to reference MTL protocols.
+  if (TargetInfo.OutputObjectFormat == llvm::Triple::COFF)
+    protocolSymRef->setComdat(
+        Module.getOrInsertComdat(protocolSymRef->getName()));
 
   ObjCProtocolSymRefs.insert({protocol, protocolSymRef});
 
