@@ -1787,6 +1787,17 @@ static bool isCIntegerType(Type type) {
     return true;
 #include "swift/ClangImporter/BuiltinMappedTypes.def"
 
+  // HARMONY: `Int`/`UInt` are always valid @objc enum raw types — they are
+  // the NSInteger/NSUInteger shapes, and `@objc enum E: Int` is the single
+  // most common declaration in real iOS code. On LP64 (Apple/Linux) this is
+  // already true via CLong/CUnsignedLong above, so this is a no-op there; on
+  // LLP64 Windows NO C typealias equals `Int` (CLong = Int32, CLongLong =
+  // Int64 — distinct nominal types from Int), so without this the interop
+  // stack rejects every NSInteger-shaped @objc enum (found via
+  // fluentui-apple's FluentTheme.ColorToken, slice 6).
+  if (matchesStdlibTypeNamed("Int") || matchesStdlibTypeNamed("UInt"))
+    return true;
+
   return false;
 }
 
