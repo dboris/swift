@@ -1709,6 +1709,17 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
   Opts.MinimumInliningTargetVersion =
       getDefaultMinimumInliningTargetVersion(Opts.Target);
 
+  // HARMONY: under -wincatalyst-identity the availability platform is iOS
+  // with the declared deployment floor, but the CODEGEN triple (windows/
+  // linux/android) carries no OS version -- getVersionForTriple() answers
+  // v0.0.0, so every EXPORTED reference to an availability-annotated decl
+  // (e.g. a public typealias mentioning Identifiable, iOS 13) would diagnose
+  // "clients of <module> may have a lower deployment target". The inlining
+  // floor under identity is the identity deployment floor (fluentui slice 6;
+  // found via fluentui-apple's ControlState typealias).
+  if (Opts.WinCatalystIdentity)
+    Opts.MinimumInliningTargetVersion = Opts.WinCatalystDeploymentVersion;
+
   // Parse OS version number arguments.
   auto parseVersionArg =
       [&](OptSpecifier opt) -> std::optional<llvm::VersionTuple> {
