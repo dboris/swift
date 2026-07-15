@@ -687,8 +687,21 @@ void ModuleFile::loadExtensions(NominalTypeDecl *nominal) {
     auto parentFile = cast<FileUnit>(nominal->getParent());
     StringRef moduleName = parentFile->getExportedModuleName();
 
+    // WinCatalyst: the module-scope filter compares the extended nominal's
+    // *exported Clang module name* recorded at serialization time against the
+    // one the consumer computes now. For a Clang-imported type that is only
+    // textually #included (no owning modular header of its own), that name is
+    // unstable: as sibling Clang modules grow, the decl's attributed owner can
+    // shift between them (producer saw it under module A, consumer sees B), so
+    // the exact-string gate silently drops otherwise-valid extensions. When the
+    // nominal is Clang-imported, fall through and deserialize the candidate: the
+    // extension carries an XREF to the specific Clang decl and rebinds to the
+    // correct type on load (addExtension), so deserializing a non-matching
+    // candidate is at worst eager, never incorrect.
+    const bool nominalIsClangImported = nominal->hasClangNode();
+
     for (auto item : *iter) {
-      if (item.first != moduleName)
+      if (item.first != moduleName && !nominalIsClangImported)
         continue;
       Expected<Decl *> declOrError = getDeclChecked(item.second);
       if (!declOrError) {
