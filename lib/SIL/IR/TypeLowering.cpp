@@ -5439,8 +5439,22 @@ void TypeConverter::setCaptureTypeExpansionContext(SILDeclRef constant,
 
   auto existing = CaptureTypeExpansionContexts.find(constant);
   if (existing != CaptureTypeExpansionContexts.end()) {
-    assert(existing->second == context
-     && "closure shouldn't be emitted with different capture type expansion contexts");
+    // WINCATALYST: this was `assert(existing->second == context && "closure
+    // shouldn't be emitted with different capture type expansion contexts")`.
+    // getCaptureTypeExpansionContext above deliberately poisons the cache with
+    // minimal() when a closure's captures are queried BEFORE its emission; a
+    // local @ViewBuilder computed var with captures referencing another local
+    // builder var inside a some-View function hits exactly that ordering
+    // (fluentui FluentButtonStyle.makeBody / SheetAnimator; the result-builder
+    // transform is a required ingredient -- plain local computed vars with
+    // captures do not trip it. Regression coverage = the WinCatalyst
+    // windows-swift-sdk gate's FluentUI leg, which compiles those files;
+    // ~25-line SwiftUI-shaped repro in the commit message). No-asserts
+    // release toolchains take this path silently and KEEP the existing
+    // (minimal) context; both the capture-query side and the emission side
+    // consult this same cache, so keeping it is self-consistent (minimal =
+    // conservative: opaque types stay opaque). Mirror that deterministically.
+    // No upstream fix exists as of 2026-07 (the assert is unchanged on main).
   } else {
     // Lower in the context of the closure. Since the set of captures is a
     // private contract between the closure and its enclosing context, we
