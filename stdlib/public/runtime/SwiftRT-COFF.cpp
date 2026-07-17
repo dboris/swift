@@ -230,14 +230,11 @@ static void swift_image_constructor() {
   // exactly like SWIFT_SECTION_RANGE does for the swift5 sections.
   using objc_load_swift_image_fn = void (*)(const char **, const char **,
                                             void **, void **);
-  using objc_load_swift_categories_fn = void (*)(void **, void **);
   using objc_get_class_fn = void *(*)(const char *);
   if (HMODULE objcModule = GetModuleHandleW(L"objc")) {
     void **classlistBegin =
         reinterpret_cast<void **>(&__start_objc_classlist + 1);
     void **classlistEnd = reinterpret_cast<void **>(&__stop_objc_classlist);
-    void **catlistBegin = reinterpret_cast<void **>(&__start_objc_catlist + 1);
-    void **catlistEnd = reinterpret_cast<void **>(&__stop_objc_catlist);
 
     // Metaclass-chain fixup BEFORE registration: rewrite isa/superclass
     // words of this image's metaclasses that point at the local link
@@ -353,20 +350,6 @@ static void swift_image_constructor() {
           if (void *r = resolveNamedAnchor(*slot))
             *slot = r;
         }
-      // W4.4: category records -- canonicalize each category_t's class
-      // word (word 1: an eager class-object pointer, exactly the
-      // classrefs problem) before the registration call below hands the
-      // list to libobjc2; libobjc2 reads the class's NAME through it.
-      for (void **entry = catlistBegin; entry < catlistEnd; ++entry) {
-        if (!*entry)
-          continue;
-        void **cat = reinterpret_cast<void **>(*entry);
-        for (int i = 0; i < anchorCount; ++i)
-          if (cat[1] == classAnchors[i].anchor && canonicalClass[i])
-            cat[1] = canonicalClass[i];
-        if (void *r = resolveNamedAnchor(cat[1]))
-          cat[1] = r;
-      }
     }
 
     if (auto loadImage = reinterpret_cast<objc_load_swift_image_fn>(
@@ -376,17 +359,18 @@ static void swift_image_constructor() {
                 reinterpret_cast<const char **>(&__stop_objc_selrefs),
                 classlistBegin, classlistEnd);
     }
-    // W4.4: register this image's Swift-emitted categories AFTER its
-    // classes.  A separate probed entry point (not new parameters on the
-    // one above): PE has no symbol versioning, and an absent probe on an
-    // older objc.dll leaves the categories dormant -- the gate's category
-    // leg catches the staleness loudly -- instead of silently mis-passing
-    // arguments.
-    if (auto loadCategories = reinterpret_cast<objc_load_swift_categories_fn>(
-            reinterpret_cast<void *>(GetProcAddress(
-                objcModule, "objc_load_swift_image_categories_np")))) {
-      loadCategories(catlistBegin, catlistEnd);
-    }
+    // W4.4 -> fluentui slice-7: this image's Swift-emitted categories
+    // (.objc_catlist) are canonicalized + registered in the .CRT$XCT pass
+    // below (swift_resolve_static_objc_classrefs), NOT here.  A category
+    // targeting a STATICALLY-linked imported ObjC class (e.g. uikit.lib's
+    // UIView in an exe) cannot resolve at XCIS: the class's gnustep
+    // registration ctor (.CRT$XCLz) has not run yet, objc_lookUpClass
+    // returns null, the record's class word keeps its .hmny_canchor
+    // anchor address -- and libobjc2 would walk the ANCHOR as a Class
+    // (neighboring name-pointer words misread as isa/superclass; the
+    // fluentuitest startup 0xC0000005).  DLL-class and Swift-class
+    // targets lose nothing by the move: XCT still runs during this
+    // image's _initterm, before any user code can message them.
   }
 #endif
 }
@@ -456,6 +440,80 @@ static void swift_resolve_static_objc_classrefs() {
       if (*slot)
         if (void *r = resolveNamedAnchor(*slot))
           *slot = r;
+
+  // W4.4 -> fluentui slice-7: canonicalize + register this image's
+  // Swift-emitted category records (.objc_catlist) HERE, after .CRT$XCLz.
+  // Each record's class word is an eager class-object pointer -- exactly
+  // the classrefs problem -- but unlike classrefs a category is HANDED TO
+  // libobjc2 at registration (which walks the class object immediately),
+  // so an unresolved anchor is not a latent fault at first dispatch, it
+  // is a crash DURING the load call: at XCIS a category targeting a
+  // STATICALLY-linked imported class (uikit.lib's UIView in an exe)
+  // cannot resolve -- the class registers at XCLz, after XCIS -- and
+  // libobjc2 misreads the anchor's neighboring name-pointer words as
+  // isa/superclass (the fluentuitest startup 0xC0000005).  XCT sorts
+  // after XCLz, and getAddrOfHarmonyPEObjCClassAnchor's per-class
+  // /INCLUDE guarantees a statically-linked target's registration TU was
+  // pulled, so by now every linked-in class has registered.  An entry
+  // whose class word STILL points into an anchor range is NULLED -- the
+  // class genuinely never registered; libobjc2 skips null entries -- so
+  // the loader can never walk an anchor as a Class.
+  {
+    void **catlistBegin = reinterpret_cast<void **>(&__start_objc_catlist + 1);
+    void **catlistEnd = reinterpret_cast<void **>(&__stop_objc_catlist);
+    // The fixed-root CLASS anchors (the /alternatename table): a category
+    // record can reference a runtime root through one when no named anchor
+    // was emitted in-image (parity with the XCIS classref treatment).
+    const HarmonyMetaclassAnchor classAnchors[] = {
+        {"_TtCs12_SwiftObject", _swift_harmony_c_anchor_SwiftObject},
+        {"NSObject", _swift_harmony_c_anchor_NSObject},
+        {"__SwiftNativeNSArrayBase", _swift_harmony_c_anchor_NSArrayBase},
+        {"__SwiftNativeNSMutableArrayBase",
+         _swift_harmony_c_anchor_NSMutableArrayBase},
+        {"__SwiftNativeNSDictionaryBase",
+         _swift_harmony_c_anchor_NSDictionaryBase},
+        {"__SwiftNativeNSSetBase", _swift_harmony_c_anchor_NSSetBase},
+        {"__SwiftNativeNSStringBase", _swift_harmony_c_anchor_NSStringBase},
+        {"__SwiftNativeNSEnumeratorBase",
+         _swift_harmony_c_anchor_NSEnumeratorBase},
+    };
+    const int anchorCount = sizeof(classAnchors) / sizeof(classAnchors[0]);
+    auto isAnchorAddress = [&](void *p) -> bool {
+      const char *cp = reinterpret_cast<const char *>(p);
+      if (cp >= canchorBegin && cp < canchorEnd)
+        return true;
+      if (cp >= manchorBegin && cp < manchorEnd)
+        return true;
+      for (int i = 0; i < anchorCount; ++i)
+        if (p == classAnchors[i].anchor)
+          return true;
+      return false;
+    };
+    for (void **entry = catlistBegin; entry < catlistEnd; ++entry) {
+      if (!*entry)
+        continue;
+      void **cat = reinterpret_cast<void **>(*entry);
+      for (int i = 0; i < anchorCount; ++i)
+        if (cat[1] == classAnchors[i].anchor)
+          if (void *cls = getClass(classAnchors[i].className))
+            cat[1] = cls;
+      if (void *r = resolveNamedAnchor(cat[1]))
+        cat[1] = r;
+      if (isAnchorAddress(cat[1]))
+        *entry = nullptr; // target class never registered; nothing to attach
+    }
+    // A separate probed entry point (not new parameters on
+    // objc_load_swift_image_np): PE has no symbol versioning, and an
+    // absent probe on an older objc.dll leaves the categories dormant --
+    // the gate's category leg catches the staleness loudly -- instead of
+    // silently mis-passing arguments.
+    using objc_load_swift_categories_fn = void (*)(void **, void **);
+    if (auto loadCategories = reinterpret_cast<objc_load_swift_categories_fn>(
+            reinterpret_cast<void *>(GetProcAddress(
+                objcModule, "objc_load_swift_image_categories_np")))) {
+      loadCategories(catlistBegin, catlistEnd);
+    }
+  }
 }
 
 #pragma section(".CRT$XCT", long, read)
