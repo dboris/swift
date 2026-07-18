@@ -3794,8 +3794,22 @@ static void initClassFieldOffsetVector(ClassMetadata *self,
     // generated a correct ivar layout, which it will simply slide if
     // it needs to.
     } else {
+#if defined(__APPLE__)
       size = rodata->InstanceStart;
       alignMask = 0xF; // malloc alignment guarantee
+#else
+      // HARMONY (gnustep interop): the emitted rodata InstanceStart is 0 for
+      // these runtime-laid-out classes, and libobjc2 has no objc4-style
+      // ivar-slide bridge to repair a wrong base afterwards — so laying from
+      // InstanceStart produced a 0-based field-offset vector while IRGen's
+      // static accesses use the true 8-based layout (the fluentui slice-7
+      // ControlState reflection crash: Mirror retained UUID bytes as a Box
+      // pointer). The realized ObjC superclass's actual instance size is
+      // the correct, IRGen-matching layout base.
+      size = class_getInstanceSize(
+          reinterpret_cast<Class>(const_cast<ClassMetadata *>(super)));
+      alignMask = 0xF; // malloc alignment guarantee
+#endif
     }
 #endif
 

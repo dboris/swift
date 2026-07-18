@@ -741,17 +741,28 @@ struct ClassImpl : ReflectionMirrorImpl {
       fieldOffset = ivar_getOffset(ivars[i]);
       free(ivars);
   #elif SWIFT_OBJC_INTEROP
-      // HARMONY (gnustep interop): a ClassImpl mirror only ever wraps a
-      // Swift-described class (count() reads its Swift description), and on
-      // this stack its field-offset vector is authoritative — it is slid by
-      // swift_initClassMetadata against the runtime-reported superclass
-      // size, and there are no resilient ObjC base classes (the Apple-only
-      // reason for the ivar detour above). libobjc2's ivar list for a
-      // Swift-emitted class does not describe Swift stored properties, so
-      // the ObjC path dereferences a short/absent list (the fluentui
-      // slice-7 ControlState crash: NSObject-rooted ObservableObject +
-      // OpenCombine's @Published field enumeration).
-      fieldOffset = Clazz->getFieldOffsets()[i];
+      // HARMONY (gnustep interop). Two sub-cases (the fluentui slice-7
+      // ControlState reflection crashes):
+      //  * Runtime-laid-out classes (a field's layout not statically known,
+      //    e.g. a FoundationEssentials UUID): the authoritative offsets are
+      //    the LIVE ivar-offset globals — libobjc2 slides them lazily at
+      //    class realization, AFTER swift_initClassMetadata ran, so the
+      //    Swift field-offset vector keeps pre-slide values forever (Apple
+      //    has the same staleness and reads ivars instead). The class HAS a
+      //    complete ivar list here (initObjCClass built it).
+      //  * Fixed-layout classes: the static field-offset vector is correct,
+      //    and the gnustep metadata carries no usable ivar list for Swift
+      //    stored properties (blindly indexing it was the original
+      //    ivar_getOffset AV) — fall back to the vector.
+      unsigned ivarCount = 0;
+      Ivar *ivars = class_copyIvarList(
+          reinterpret_cast<Class>(const_cast<ClassMetadata *>(Clazz)), &ivarCount);
+      if (ivars && ivarCount == description->NumFields && ivars[i]) {
+        fieldOffset = ivar_getOffset(ivars[i]);
+      } else {
+        fieldOffset = Clazz->getFieldOffsets()[i];
+      }
+      free(ivars);
   #else
       swift::crash("Object appears to be Objective-C, but no runtime.");
   #endif
