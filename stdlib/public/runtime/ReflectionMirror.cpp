@@ -741,28 +741,61 @@ struct ClassImpl : ReflectionMirrorImpl {
       fieldOffset = ivar_getOffset(ivars[i]);
       free(ivars);
   #elif SWIFT_OBJC_INTEROP
-      // HARMONY (gnustep interop). Two sub-cases (the fluentui slice-7
-      // ControlState reflection crashes):
-      //  * Runtime-laid-out classes (a field's layout not statically known,
-      //    e.g. a FoundationEssentials UUID): the authoritative offsets are
-      //    the LIVE ivar-offset globals — libobjc2 slides them lazily at
-      //    class realization, AFTER swift_initClassMetadata ran, so the
-      //    Swift field-offset vector keeps pre-slide values forever (Apple
-      //    has the same staleness and reads ivars instead). The class HAS a
-      //    complete ivar list here (initObjCClass built it).
-      //  * Fixed-layout classes: the static field-offset vector is correct,
-      //    and the gnustep metadata carries no usable ivar list for Swift
-      //    stored properties (blindly indexing it was the original
-      //    ivar_getOffset AV) — fall back to the vector.
-      unsigned ivarCount = 0;
-      Ivar *ivars = class_copyIvarList(
-          reinterpret_cast<Class>(const_cast<ClassMetadata *>(Clazz)), &ivarCount);
-      if (ivars && ivarCount == description->NumFields && ivars[i]) {
-        fieldOffset = ivar_getOffset(ivars[i]);
-      } else {
-        fieldOffset = Clazz->getFieldOffsets()[i];
+      // HARMONY (gnustep interop): read the field offset straight from the
+      // objc4 class_ro_t ivar list — NOT class_copyIvarList.
+      //
+      // A Swift-emitted class keeps NO usable list in its INLINE (gnustep)
+      // `ivars` field: that slot is permanently overlaid by the Swift class
+      // metadata (the nominal type descriptor). libobjc2's class_copyIvarList
+      // reads exactly that inline slot, so for a Swift class it interprets
+      // metadata bytes as an ivar list — nondeterministically an AV, or (the
+      // fluentui slice-7 ControlState `--capture-sizes` hang) a ~2^31 "count"
+      // that never returns from its malloc+copy loop. The AUTHORITATIVE
+      // offsets are the objc4 class_ro_t ivar-offset globals, which
+      // wincat_reconcile_swift_instance_size slides against the runtime
+      // superclass size at the first alloc (before any reflection). Read them
+      // directly and portably via the class metadata's Data/bits word.
+      //
+      // Fall back to the Swift field-offset vector only when this is not a
+      // Swift class or carries no matching ro ivar list (its base is corrected
+      // by initClassFieldOffsetVector for the ObjC-superclass case).
+      fieldOffset = Clazz->getFieldOffsets()[i];
+      {
+        // objc4 class_ro_t as swiftc emits it off-Apple (see libobjc2 class.h
+        // `objc_swift_class_ro`); low bits of Data tag a Swift class, the rest
+        // points at the ro. Only the fields up to `ivars` are described.
+        struct WCSwiftClassRO {
+          uint32_t flags;
+          uint32_t instanceStart;
+          uint32_t instanceSize;
+          uint32_t reserved;
+          const void *ivarLayout;
+          const char *name;
+          const void *baseMethodList;
+          const void *baseProtocols;
+          const void *ivars;
+        };
+        // objc4 ivar_list_t header: { uint32_t entsize; uint32_t count; ivar_t[] }
+        // ivar_t begins with `int32_t *offset` (the slid offset global).
+        uintptr_t dataBits = (uintptr_t)Clazz->Data;
+        if (dataBits & (uintptr_t)0x3) {   // OBJC_FAST_IS_SWIFT_MASK
+          auto *ro = reinterpret_cast<const WCSwiftClassRO *>(
+              dataBits & ~(uintptr_t)0x7); // OBJC_FAST_DATA_MASK
+          if (ro && ro->ivars) {
+            auto *il = reinterpret_cast<const uint32_t *>(ro->ivars);
+            uint32_t entsize = il[0];
+            uint32_t count = il[1];
+            if (count == description->NumFields && (uint32_t)i < count) {
+              const char *recs = reinterpret_cast<const char *>(ro->ivars)
+                                 + 2 * sizeof(uint32_t);
+              auto *offsetPtr = *reinterpret_cast<int32_t *const *>(
+                  recs + (size_t)i * entsize);
+              if (offsetPtr)
+                fieldOffset = (uintptr_t)*offsetPtr;
+            }
+          }
+        }
       }
-      free(ivars);
   #else
       swift::crash("Object appears to be Objective-C, but no runtime.");
   #endif
