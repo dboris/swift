@@ -735,11 +735,23 @@ struct ClassImpl : ReflectionMirrorImpl {
     if (usesNativeSwiftReferenceCounting(Clazz)) {
       fieldOffset = Clazz->getFieldOffsets()[i];
     } else {
-  #if SWIFT_OBJC_INTEROP
+  #if SWIFT_OBJC_INTEROP && defined(__APPLE__)
       Ivar *ivars = class_copyIvarList(
           reinterpret_cast<Class>(const_cast<ClassMetadata *>(Clazz)), nullptr);
       fieldOffset = ivar_getOffset(ivars[i]);
       free(ivars);
+  #elif SWIFT_OBJC_INTEROP
+      // HARMONY (gnustep interop): a ClassImpl mirror only ever wraps a
+      // Swift-described class (count() reads its Swift description), and on
+      // this stack its field-offset vector is authoritative — it is slid by
+      // swift_initClassMetadata against the runtime-reported superclass
+      // size, and there are no resilient ObjC base classes (the Apple-only
+      // reason for the ivar detour above). libobjc2's ivar list for a
+      // Swift-emitted class does not describe Swift stored properties, so
+      // the ObjC path dereferences a short/absent list (the fluentui
+      // slice-7 ControlState crash: NSObject-rooted ObservableObject +
+      // OpenCombine's @Published field enumeration).
+      fieldOffset = Clazz->getFieldOffsets()[i];
   #else
       swift::crash("Object appears to be Objective-C, but no runtime.");
   #endif
