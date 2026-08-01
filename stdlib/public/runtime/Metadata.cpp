@@ -4050,6 +4050,42 @@ initGenericObjCClass(ClassMetadata *self, size_t numFields,
 }
 #endif
 
+#if defined(_WIN32) && SWIFT_OBJC_INTEROP
+// HARMONY (defect B2): the ObjC runtime base of a Swift ROOT class travels a
+// PE-only route.  IRGen picks ClassMetadataStrategy::Singleton for every COFF
+// class (LazyInitializeClassMetadata = isOSBinFormatCOFF), and under that
+// strategy GenMeta's addSuperclass() emits a NULL Superclass placeholder for
+// the runtime to fill in -- so the getAddrOfObjCClass(<runtime base>) pointer
+// that Mach-O/ELF get statically is simply never emitted on this arm.  What IS
+// emitted is the objc4 METAclass, whose super_class word holds
+// OBJC_METACLASS_$_<base>, i.e. this image's Harmony link anchor (PE cannot
+// bind a class object across images at load time).  Measured: for
+// _TtCs21__SwiftNativeNSString the class-side word is 0 and the metaclass-side
+// word is _swift_harmony_mc_anchor_NSStringBase.
+//
+// The resolver lives with the anchor tables in SwiftRT-COFF.cpp, whose object
+// (swiftrt.obj) is linked into swiftCore.dll; it maps an anchor address to the
+// CLASS object the base stands for, or null for anything else.
+extern "C" void *_swift_harmony_classForMetaclassAnchor(void *p);
+
+/// The declared ObjC runtime base of a Swift root class, or null if it has
+/// none (a plain root class, whose base is SwiftObject anyway).
+static const ClassMetadata *
+harmonyObjCRuntimeBaseForRootClass(const ClassMetadata *self) {
+  // Word 0 of Swift class metadata under ObjC interop IS the metaclass
+  // pointer (GenMeta's addMetadataFlags emits ptrtoint of the metaclass);
+  // word 1 of an objc4 metaclass is its super_class.  Read them raw -- this
+  // runs before initObjCClass/realization, so the ObjC runtime has never seen
+  // either object and object_getClass() would be an unnecessary dependency.
+  auto *const *classWords = reinterpret_cast<void *const *>(self);
+  auto *const *metaWords = reinterpret_cast<void *const *>(classWords[0]);
+  if (!metaWords)
+    return nullptr;
+  return reinterpret_cast<const ClassMetadata *>(
+      _swift_harmony_classForMetaclassAnchor(metaWords[1]));
+}
+#endif
+
 SWIFT_CC(swift)
 SWIFT_RUNTIME_STDLIB_INTERNAL MetadataResponse
 getSuperclassMetadata(MetadataRequest request, const ClassMetadata *self) {
@@ -4130,8 +4166,19 @@ _swift_initClassMetadataImpl(ClassMetadata *self,
 
 #if SWIFT_OBJC_INTEROP
   // Set the superclass to SwiftObject if this is a root class.
-  if (!super)
-    self->Superclass = getRootSuperclass();
+  if (!super) {
+#if defined(_WIN32)
+    // HARMONY (defect B2): on PE the declared ObjC runtime base reaches us
+    // only through the metaclass anchor -- see
+    // harmonyObjCRuntimeBaseForRootClass above.  Recovering it here makes a
+    // @_swift_native_objc_runtime_base root class root at its declared base,
+    // exactly as it already does on ELF/Mach-O.  Null (a plain root class, or
+    // a base this image carries no anchor for) keeps today's behaviour.
+    self->Superclass = harmonyObjCRuntimeBaseForRootClass(self);
+    if (!self->Superclass)
+#endif
+      self->Superclass = getRootSuperclass();
+  }
 
   // Register our custom implementation of class_getImageName.
   static swift::once_t onceToken;
@@ -4255,7 +4302,16 @@ _swift_updateClassMetadataImpl(ClassMetadata *self,
 
   // Check that it matches what's already in there.
   if (!super)
+#if defined(_WIN32)
+    // HARMONY (defect B2): a root class's Superclass may legitimately be its
+    // declared ObjC runtime base here, not getRootSuperclass() -- either
+    // recovered from the metaclass anchor by _swift_initClassMetadataImpl, or
+    // statically emitted under a non-Singleton strategy.
+    assert(self->Superclass == getRootSuperclass() ||
+           self->Superclass == harmonyObjCRuntimeBaseForRootClass(self));
+#else
     assert(self->Superclass == getRootSuperclass());
+#endif
   else
     assert(self->Superclass == super);
 
