@@ -183,7 +183,97 @@ struct HarmonyMetaclassAnchor {
   const char *className; // the runtime registration name
   void *anchor;          // this image's link anchor for its metaclass
 };
+
+// The two fixed anchor tables, at file scope so the three consumers -- the
+// .CRT$XCIS image constructor, the .CRT$XCT catlist pass, and the on-demand
+// resolver below -- read ONE list.  (They were three local copies; a name
+// added to one and not the others is a silent hole.)
+const HarmonyMetaclassAnchor kHarmonyMetaclassAnchors[] = {
+    {"_TtCs12_SwiftObject", _swift_harmony_mc_anchor_SwiftObject},
+    {"NSObject", _swift_harmony_mc_anchor_NSObject},
+    {"__SwiftNativeNSArrayBase", _swift_harmony_mc_anchor_NSArrayBase},
+    {"__SwiftNativeNSMutableArrayBase",
+     _swift_harmony_mc_anchor_NSMutableArrayBase},
+    {"__SwiftNativeNSDictionaryBase",
+     _swift_harmony_mc_anchor_NSDictionaryBase},
+    {"__SwiftNativeNSSetBase", _swift_harmony_mc_anchor_NSSetBase},
+    {"__SwiftNativeNSStringBase", _swift_harmony_mc_anchor_NSStringBase},
+    {"__SwiftNativeNSEnumeratorBase",
+     _swift_harmony_mc_anchor_NSEnumeratorBase},
+};
+const HarmonyMetaclassAnchor kHarmonyClassAnchors[] = {
+    {"_TtCs12_SwiftObject", _swift_harmony_c_anchor_SwiftObject},
+    {"NSObject", _swift_harmony_c_anchor_NSObject},
+    {"__SwiftNativeNSArrayBase", _swift_harmony_c_anchor_NSArrayBase},
+    {"__SwiftNativeNSMutableArrayBase",
+     _swift_harmony_c_anchor_NSMutableArrayBase},
+    {"__SwiftNativeNSDictionaryBase",
+     _swift_harmony_c_anchor_NSDictionaryBase},
+    {"__SwiftNativeNSSetBase", _swift_harmony_c_anchor_NSSetBase},
+    {"__SwiftNativeNSStringBase", _swift_harmony_c_anchor_NSStringBase},
+    {"__SwiftNativeNSEnumeratorBase", _swift_harmony_c_anchor_NSEnumeratorBase},
+};
+const int kHarmonyAnchorCount =
+    sizeof(kHarmonyMetaclassAnchors) / sizeof(kHarmonyMetaclassAnchors[0]);
+static_assert(sizeof(kHarmonyClassAnchors) ==
+                  sizeof(kHarmonyMetaclassAnchors),
+              "the class and metaclass anchor tables must stay parallel");
 } // namespace
+
+// HARMONY (defect B2): resolve an anchor-valued METACLASS superclass word to
+// the CLASS object it stands for, ON DEMAND rather than from the image
+// constructor.
+//
+// Why this exists.  A Swift root class carrying
+// @_swift_native_objc_runtime_base(<base>) gets its ObjC base only through the
+// metaclass chain on PE: IRGen picks ClassMetadataStrategy::Singleton for every
+// COFF class (LazyInitializeClassMetadata = isOSBinFormatCOFF), and under that
+// strategy the CLASS metadata's Superclass word is emitted NULL for the runtime
+// to fill in -- while the statically-emitted metaclass still carries
+// OBJC_METACLASS_$_<base>, i.e. this image's link anchor.  The Swift runtime's
+// class-metadata initialization (Metadata.cpp's _swift_initClassMetadataImpl)
+// therefore has no Swift superclass name to demangle and no class-side pointer
+// to canonicalize, and used to root the class at SwiftObject -- which is why a
+// bridged Swift string was not an NSString on Windows and was on ELF (there the
+// Fixed/Update strategy emits the base statically and the dynamic linker binds
+// it).  Feeding the metaclass word through here restores the ELF behaviour.
+//
+// ON DEMAND, not constructor-time: swift_image_constructor runs at .CRT$XCIS,
+// which sorts BEFORE this image's own gnustep class registrations (.CRT$XCLz),
+// so objc_lookUpClass cannot yet see swiftCore's own __SwiftNativeNS*Base
+// classes.  By the time any Swift metadata is initialized they are registered.
+//
+// Returns null for anything that is not one of this image's anchors -- callers
+// keep their existing behaviour then.
+extern "C" void *_swift_harmony_classForMetaclassAnchor(void *p) {
+  if (!p)
+    return nullptr;
+  HMODULE objcModule = GetModuleHandleW(L"objc");
+  if (!objcModule)
+    return nullptr;
+  using objc_get_class_fn = void *(*)(const char *);
+  auto getClass = reinterpret_cast<objc_get_class_fn>(reinterpret_cast<void *>(
+      GetProcAddress(objcModule, "objc_lookUpClass")));
+  if (!getClass)
+    return nullptr;
+
+  // The fixed anchors: the Swift-DEFINED runtime roots, which IRGen cannot
+  // give a self-describing anchor (no clang node to hang one on).
+  for (int i = 0; i < kHarmonyAnchorCount; ++i)
+    if (p == kHarmonyMetaclassAnchors[i].anchor)
+      return getClass(kHarmonyMetaclassAnchors[i].className);
+
+  // The GENERAL, self-describing anchors (clang-imported classes): the anchor
+  // word points at the class's runtime name.
+  const char *cp = reinterpret_cast<const char *>(p);
+  const char *manchorBegin =
+      reinterpret_cast<const char *>(&__start_hmny_manchor + 1);
+  const char *manchorEnd = reinterpret_cast<const char *>(&__stop_hmny_manchor);
+  if (cp >= manchorBegin && cp < manchorEnd)
+    return getClass(*reinterpret_cast<const char *const *>(cp));
+
+  return nullptr;
+}
 #endif
 
 namespace {
@@ -247,33 +337,9 @@ static void swift_image_constructor() {
     if (auto getClass = reinterpret_cast<objc_get_class_fn>(
             reinterpret_cast<void *>(
                 GetProcAddress(objcModule, "objc_lookUpClass")))) {
-      const HarmonyMetaclassAnchor anchors[] = {
-          {"_TtCs12_SwiftObject", _swift_harmony_mc_anchor_SwiftObject},
-          {"NSObject", _swift_harmony_mc_anchor_NSObject},
-          {"__SwiftNativeNSArrayBase", _swift_harmony_mc_anchor_NSArrayBase},
-          {"__SwiftNativeNSMutableArrayBase",
-           _swift_harmony_mc_anchor_NSMutableArrayBase},
-          {"__SwiftNativeNSDictionaryBase",
-           _swift_harmony_mc_anchor_NSDictionaryBase},
-          {"__SwiftNativeNSSetBase", _swift_harmony_mc_anchor_NSSetBase},
-          {"__SwiftNativeNSStringBase", _swift_harmony_mc_anchor_NSStringBase},
-          {"__SwiftNativeNSEnumeratorBase",
-           _swift_harmony_mc_anchor_NSEnumeratorBase},
-      };
-      const HarmonyMetaclassAnchor classAnchors[] = {
-          {"_TtCs12_SwiftObject", _swift_harmony_c_anchor_SwiftObject},
-          {"NSObject", _swift_harmony_c_anchor_NSObject},
-          {"__SwiftNativeNSArrayBase", _swift_harmony_c_anchor_NSArrayBase},
-          {"__SwiftNativeNSMutableArrayBase",
-           _swift_harmony_c_anchor_NSMutableArrayBase},
-          {"__SwiftNativeNSDictionaryBase",
-           _swift_harmony_c_anchor_NSDictionaryBase},
-          {"__SwiftNativeNSSetBase", _swift_harmony_c_anchor_NSSetBase},
-          {"__SwiftNativeNSStringBase", _swift_harmony_c_anchor_NSStringBase},
-          {"__SwiftNativeNSEnumeratorBase",
-           _swift_harmony_c_anchor_NSEnumeratorBase},
-      };
-      const int anchorCount = sizeof(anchors) / sizeof(anchors[0]);
+      const HarmonyMetaclassAnchor *anchors = kHarmonyMetaclassAnchors;
+      const HarmonyMetaclassAnchor *classAnchors = kHarmonyClassAnchors;
+      const int anchorCount = kHarmonyAnchorCount;
       void *canonicalClass[anchorCount] = {};
       void *canonical[anchorCount] = {};
       for (int i = 0; i < anchorCount; ++i)
@@ -464,20 +530,8 @@ static void swift_resolve_static_objc_classrefs() {
     // The fixed-root CLASS anchors (the /alternatename table): a category
     // record can reference a runtime root through one when no named anchor
     // was emitted in-image (parity with the XCIS classref treatment).
-    const HarmonyMetaclassAnchor classAnchors[] = {
-        {"_TtCs12_SwiftObject", _swift_harmony_c_anchor_SwiftObject},
-        {"NSObject", _swift_harmony_c_anchor_NSObject},
-        {"__SwiftNativeNSArrayBase", _swift_harmony_c_anchor_NSArrayBase},
-        {"__SwiftNativeNSMutableArrayBase",
-         _swift_harmony_c_anchor_NSMutableArrayBase},
-        {"__SwiftNativeNSDictionaryBase",
-         _swift_harmony_c_anchor_NSDictionaryBase},
-        {"__SwiftNativeNSSetBase", _swift_harmony_c_anchor_NSSetBase},
-        {"__SwiftNativeNSStringBase", _swift_harmony_c_anchor_NSStringBase},
-        {"__SwiftNativeNSEnumeratorBase",
-         _swift_harmony_c_anchor_NSEnumeratorBase},
-    };
-    const int anchorCount = sizeof(classAnchors) / sizeof(classAnchors[0]);
+    const HarmonyMetaclassAnchor *classAnchors = kHarmonyClassAnchors;
+    const int anchorCount = kHarmonyAnchorCount;
     auto isAnchorAddress = [&](void *p) -> bool {
       const char *cp = reinterpret_cast<const char *>(p);
       if (cp >= canchorBegin && cp < canchorEnd)
