@@ -547,6 +547,11 @@ struct HarmonyDiagLine {
   }
 
   void flush() {
+    // Always leave room for the newline: a class name long enough to fill the
+    // buffer (a garbled anchor can point at anything) would otherwise emit a
+    // line WITHOUT a terminator and merge with the next one.
+    if (len + 1 >= sizeof(buf))
+      len = sizeof(buf) - 2;
     add("\n");
     OutputDebugStringA(buf);
     HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
