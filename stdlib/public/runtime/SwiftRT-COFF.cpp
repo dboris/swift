@@ -717,16 +717,21 @@ static void swift_resolve_static_objc_classrefs() {
   };
   HarmonyAnchorCensus census;
 
+  // The kind rides IN the range, so adding a range cannot leave the census
+  // silently mislabelling (or skipping) it.
   struct RefRange {
     void **begin, **end;
+    unsigned kind;
   } refRanges[] = {
       {reinterpret_cast<void **>(&__start_objc_classrefs + 1),
-       reinterpret_cast<void **>(&__stop_objc_classrefs)},
+       reinterpret_cast<void **>(&__stop_objc_classrefs),
+       HarmonyAnchorCensus::Classref},
       {reinterpret_cast<void **>(&__start_objc_superrefs + 1),
-       reinterpret_cast<void **>(&__stop_objc_superrefs)},
+       reinterpret_cast<void **>(&__stop_objc_superrefs),
+       HarmonyAnchorCensus::Superref},
   };
-  for (int r = 0; r < 2; ++r)
-    for (void **slot = refRanges[r].begin; slot < refRanges[r].end; ++slot) {
+  for (const auto &range : refRanges)
+    for (void **slot = range.begin; slot < range.end; ++slot) {
       if (!*slot)
         continue;
       if (void *resolved = resolveNamedAnchor(*slot)) {
@@ -739,8 +744,7 @@ static void swift_resolve_static_objc_classrefs() {
       // NAMED before it can happen.
       bool meta = false;
       if (const char *name = anchorNameAt(*slot, &meta))
-        census.record(name, (r == 0 ? HarmonyAnchorCensus::Classref
-                                    : HarmonyAnchorCensus::Superref) |
+        census.record(name, range.kind |
                                 (meta ? HarmonyAnchorCensus::Metaclass : 0u));
     }
 
