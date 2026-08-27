@@ -467,6 +467,209 @@ extern "C" void (*pSwiftImageConstructor)(void) = &swift_image_constructor;
 // (static imported classes, now registered) get rewritten.  Only the GENERAL
 // named anchors are walked -- the fixed swift-core roots are DLL/swiftCore
 // classes already resolved at XCIS.
+// HARMONY (anchor diagnostic, lesson #485): when objc_lookUpClass(name) comes
+// back null the resolver below LEAVES the slot on its .hmny_canchor anchor, by
+// design -- it "faults loudly at first dispatch rather than silently".  But
+// loudly is a bare 0xC0000005 at objc_msgSend+0x28 inside objc.dll with a bad
+// isa, naming NOTHING: on 2026-08-27 that cost a full debugging session
+// (swift-canvas's dlopen'd live view; the missing class turned out to be
+// UIPinchGestureRecognizer, in the Linux UIKit build and never in
+// windows.cmake), and only an lldb read of the receiver's word 0 named it.
+// The anchor is SELF-DESCRIBING, so the census that session did by hand
+// belongs here: after the resolution pass, every slot STILL inside an anchor
+// range names a class that NO loaded image registers.  One report at load
+// turns "0xC0000005 in objc.dll, no message" into "class X referenced by this
+// image is not registered".
+//
+// Unconditional by default -- set HARMONY_ANCHOR_DIAG=0 to silence.  Every
+// line is a LATENT CRASH in this image, so a healthy process prints nothing at
+// all; there is no steady-state noise to gate away.
+//
+// No CRT here: swiftrt.obj links into EVERY Swift image, so this writes with
+// WriteFile + OutputDebugStringA and reads the env with GetEnvironmentVariableA
+// rather than dragging stdio/getenv into every image -- which also dodges
+// ucrt's TEXT-mode stdio line-ending surprises.
+namespace {
+
+bool harmonyAnchorDiagEnabled() {
+  char buf[8] = {};
+  DWORD n = GetEnvironmentVariableA("HARMONY_ANCHOR_DIAG", buf, sizeof(buf));
+  if (n == 0 || n >= sizeof(buf))
+    return true; // unset (or something long/odd) -> on
+  return !(buf[0] == '0' && buf[1] == '\0');
+}
+
+// A name pointer read out of an anchor cell must never crash the DIAGNOSTIC.
+// Names live in .rdata so this is belt-and-braces, but a garbled anchor is
+// exactly the situation this code runs in.
+bool harmonyAnchorNameReadable(const char *p) {
+  if (!p)
+    return false;
+  MEMORY_BASIC_INFORMATION mbi = {};
+  if (!VirtualQuery(p, &mbi, sizeof(mbi)))
+    return false;
+  if (mbi.State != MEM_COMMIT)
+    return false;
+  if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD))
+    return false;
+  const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                         PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                         PAGE_EXECUTE_WRITECOPY;
+  return (mbi.Protect & readable) != 0;
+}
+
+// One line, assembled in a fixed buffer and written to BOTH the debugger and
+// stderr (a windowed app has no console; a console app has no debugger).
+struct HarmonyDiagLine {
+  char buf[512];
+  size_t len;
+
+  HarmonyDiagLine() : len(0) { buf[0] = '\0'; }
+
+  void add(const char *s) {
+    if (!s)
+      s = "(null)";
+    while (*s && len + 1 < sizeof(buf))
+      buf[len++] = *s++;
+    buf[len] = '\0';
+  }
+
+  void addUInt(unsigned v) {
+    char tmp[12];
+    int i = 0;
+    do {
+      tmp[i++] = static_cast<char>('0' + (v % 10));
+      v /= 10;
+    } while (v && i < static_cast<int>(sizeof(tmp)));
+    while (i-- > 0 && len + 1 < sizeof(buf))
+      buf[len++] = tmp[i];
+    buf[len] = '\0';
+  }
+
+  void flush() {
+    add("\n");
+    OutputDebugStringA(buf);
+    HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+    if (h && h != INVALID_HANDLE_VALUE) {
+      DWORD written = 0;
+      WriteFile(h, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+    len = 0;
+    buf[0] = '\0';
+  }
+};
+
+// The image whose sections were just walked -- FROM_ADDRESS, so this names the
+// DLL and not the host exe when swiftrt.obj rides in a plugin.
+const char *harmonyOwningImageName(const void *addr) {
+  static char path[MAX_PATH];
+  HMODULE mod = nullptr;
+  if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                          reinterpret_cast<LPCSTR>(addr), &mod))
+    return "(this image)";
+  DWORD n = GetModuleFileNameA(mod, path, sizeof(path));
+  if (n == 0 || n >= sizeof(path))
+    return "(this image)";
+  const char *base = path;
+  for (const char *p = path; *p; ++p)
+    if (*p == '\\' || *p == '/')
+      base = p + 1;
+  return base;
+}
+
+// Deduplicated by NAME: one class is typically referenced from several slots,
+// and the useful output is the CLASS list, not the slot list.  Fixed capacity,
+// no allocation (this runs from a .CRT$XC* constructor, before user code); an
+// overflow is counted and reported rather than dropped silently.
+struct HarmonyAnchorCensus {
+  enum Kind : unsigned {
+    Classref = 1u << 0,
+    Superref = 1u << 1,
+    Category = 1u << 2,
+    Metaclass = 1u << 3, // modifier: the slot wanted the METAclass
+  };
+
+  static const int kCapacity = 64;
+  struct Entry {
+    const char *name;
+    unsigned slots;
+    unsigned kinds;
+  };
+  Entry entries[kCapacity];
+  int count;
+  unsigned dropped;
+
+  HarmonyAnchorCensus() : count(0), dropped(0) {}
+
+  static bool sameName(const char *a, const char *b) {
+    if (a == b)
+      return true;
+    while (*a && *a == *b) {
+      ++a;
+      ++b;
+    }
+    return *a == *b;
+  }
+
+  void record(const char *name, unsigned kind) {
+    for (int i = 0; i < count; ++i)
+      if (sameName(entries[i].name, name)) {
+        ++entries[i].slots;
+        entries[i].kinds |= kind;
+        return;
+      }
+    if (count == kCapacity) {
+      ++dropped;
+      return;
+    }
+    entries[count].name = name;
+    entries[count].slots = 1;
+    entries[count].kinds = kind;
+    ++count;
+  }
+
+  void report(const void *imageAddr) const {
+    if (count == 0 || !harmonyAnchorDiagEnabled())
+      return;
+    HarmonyDiagLine line;
+    line.add("harmony-anchor: ");
+    line.add(harmonyOwningImageName(imageAddr));
+    line.add(": ");
+    line.addUInt(static_cast<unsigned>(count));
+    line.add(" ObjC class(es) referenced by this image are registered in NO "
+             "loaded image; each unresolved slot still points at its "
+             ".hmny_canchor anchor and will fault at first message send "
+             "(0xC0000005 in objc_msgSend, bad isa):");
+    line.flush();
+    for (int i = 0; i < count; ++i) {
+      line.add("harmony-anchor:   ");
+      line.add(entries[i].name);
+      line.add("  [");
+      line.addUInt(entries[i].slots);
+      line.add(" slot(s):");
+      if (entries[i].kinds & Classref)
+        line.add(" classref");
+      if (entries[i].kinds & Superref)
+        line.add(" superref");
+      if (entries[i].kinds & Category)
+        line.add(" category");
+      if (entries[i].kinds & Metaclass)
+        line.add(" metaclass");
+      line.add("]");
+      line.flush();
+    }
+    if (dropped) {
+      line.add("harmony-anchor:   ... and ");
+      line.addUInt(dropped);
+      line.add(" further unresolved slot(s) beyond the census capacity");
+      line.flush();
+    }
+  }
+};
+
+} // namespace
+
 static void swift_resolve_static_objc_classrefs() {
   HMODULE objcModule = GetModuleHandleW(L"objc");
   if (!objcModule)
@@ -493,6 +696,27 @@ static void swift_resolve_static_objc_classrefs() {
     return nullptr;
   };
 
+  // The diagnostic half of resolveNamedAnchor: a slot that is an anchor but
+  // did NOT resolve.  Reads the anchor's self-describing name word (word 0)
+  // and reports whether it is a class or a metaclass anchor.  Never returns
+  // null for an in-range address -- an anchor whose name word is unreadable
+  // must still be COUNTED, or a garbled anchor would go unreported.
+  auto anchorNameAt = [&](void *p, bool *isMeta) -> const char * {
+    const char *cp = reinterpret_cast<const char *>(p);
+    bool meta = false;
+    if (!(cp >= canchorBegin && cp < canchorEnd)) {
+      if (!(cp >= manchorBegin && cp < manchorEnd))
+        return nullptr; // not an anchor at all
+      meta = true;
+    }
+    if (isMeta)
+      *isMeta = meta;
+    const char *name = *reinterpret_cast<const char *const *>(cp);
+    return harmonyAnchorNameReadable(name) ? name
+                                           : "(anchor name unreadable)";
+  };
+  HarmonyAnchorCensus census;
+
   struct RefRange {
     void **begin, **end;
   } refRanges[] = {
@@ -501,11 +725,24 @@ static void swift_resolve_static_objc_classrefs() {
       {reinterpret_cast<void **>(&__start_objc_superrefs + 1),
        reinterpret_cast<void **>(&__stop_objc_superrefs)},
   };
-  for (const auto &range : refRanges)
-    for (void **slot = range.begin; slot < range.end; ++slot)
-      if (*slot)
-        if (void *r = resolveNamedAnchor(*slot))
-          *slot = r;
+  for (int r = 0; r < 2; ++r)
+    for (void **slot = refRanges[r].begin; slot < refRanges[r].end; ++slot) {
+      if (!*slot)
+        continue;
+      if (void *resolved = resolveNamedAnchor(*slot)) {
+        *slot = resolved;
+        continue;
+      }
+      // Still on its anchor after BOTH passes (XCIS and this one), so
+      // objc_lookUpClass came back null and the class is in no loaded image.
+      // The slot is left alone -- the deliberate loud fault -- but it is now
+      // NAMED before it can happen.
+      bool meta = false;
+      if (const char *name = anchorNameAt(*slot, &meta))
+        census.record(name, (r == 0 ? HarmonyAnchorCensus::Classref
+                                    : HarmonyAnchorCensus::Superref) |
+                                (meta ? HarmonyAnchorCensus::Metaclass : 0u));
+    }
 
   // W4.4 -> fluentui slice-7: canonicalize + register this image's
   // Swift-emitted category records (.objc_catlist) HERE, after .CRT$XCLz.
@@ -553,8 +790,21 @@ static void swift_resolve_static_objc_classrefs() {
             cat[1] = cls;
       if (void *r = resolveNamedAnchor(cat[1]))
         cat[1] = r;
-      if (isAnchorAddress(cat[1]))
+      if (isAnchorAddress(cat[1])) {
+        // Name the target BEFORE the address is discarded below.  A named
+        // anchor is self-describing; a fixed-root anchor is not, so its name
+        // comes from the table.
+        bool meta = false;
+        const char *name = anchorNameAt(cat[1], &meta);
+        if (!name)
+          for (int i = 0; i < anchorCount; ++i)
+            if (cat[1] == classAnchors[i].anchor)
+              name = classAnchors[i].className;
+        if (name)
+          census.record(name, HarmonyAnchorCensus::Category |
+                                  (meta ? HarmonyAnchorCensus::Metaclass : 0u));
         *entry = nullptr; // target class never registered; nothing to attach
+      }
     }
     // A separate probed entry point (not new parameters on
     // objc_load_swift_image_np): PE has no symbol versioning, and an
@@ -568,6 +818,12 @@ static void swift_resolve_static_objc_classrefs() {
       loadCategories(catlistBegin, catlistEnd);
     }
   }
+
+  // The whole point (lesson #485): say WHICH classes stayed unresolved, by
+  // name, here at load -- not later as an unattributed access violation.  A
+  // healthy image censuses zero and prints nothing.  The address hands the
+  // report this image's identity (swiftrt.obj is linked into every one).
+  census.report(&__start_hmny_canchor);
 }
 
 #pragma section(".CRT$XCT", long, read)
