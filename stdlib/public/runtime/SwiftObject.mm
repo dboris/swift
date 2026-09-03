@@ -92,6 +92,15 @@ const uintptr_t objc_debug_isa_class_mask;
 uintptr_t swift::swift_isaMask = SWIFT_ISA_MASK;
 #endif
 
+#if SWIFT_OBJC_INTEROP && !defined(__APPLE__)
+// Private.h restates libobjc2's small-object mask for isObjCTaggedPointer()
+// (it cannot include <objc/runtime.h> on every path); this TU has the real
+// header, so this is where the two are held to agree.
+static_assert(SWIFT_LIBOBJC2_SMALL_OBJECT_MASK == OBJC_SMALL_OBJECT_MASK,
+              "isObjCTaggedPointer(): SWIFT_LIBOBJC2_SMALL_OBJECT_MASK disagrees "
+              "with libobjc2's OBJC_SMALL_OBJECT_MASK");
+#endif
+
 const ClassMetadata *swift::_swift_getClass(const void *object) {
 #if SWIFT_OBJC_INTEROP
   if (!isObjCTaggedPointer(object))

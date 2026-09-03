@@ -147,6 +147,21 @@ public:
 #  endif
 #endif
 
+#if SWIFT_OBJC_INTEROP && !defined(__APPLE__)
+// WinCatalyst interop (Harmony): off Darwin the ObjC runtime is libobjc2, and
+// its tagged pointers ("small objects") are identified by the LOW
+// OBJC_SMALL_OBJECT_MASK bits -- 7 on 64-bit, 1 on 32-bit
+// (third_party/libobjc2/objc/runtime.h; class.h isSmallObject()).  Restated
+// here because this header does not include <objc/runtime.h> on every path;
+// SwiftObject.mm static_asserts that the two agree, so a libobjc2 change
+// cannot silently desynchronize them.  Consumed by isObjCTaggedPointer().
+#  if __POINTER_WIDTH__ == 64
+#    define SWIFT_LIBOBJC2_SMALL_OBJECT_MASK 7
+#  else
+#    define SWIFT_LIBOBJC2_SMALL_OBJECT_MASK 1
+#  endif
+#endif
+
 #if SWIFT_OBJC_INTEROP
   bool objectConformsToObjCProtocol(const void *theObject,
                                     ProtocolDescriptorRef protocol);
@@ -168,7 +183,29 @@ public:
   /// Is the given value an Objective-C tagged pointer?
   static inline bool isObjCTaggedPointer(const void *object) {
 #if SWIFT_OBJC_INTEROP
+#  if !defined(__APPLE__)
+    // WinCatalyst interop (Harmony): test libobjc2's small-object bits, NOT
+    // Apple's per-arch ObjCReservedBitsMask (bit 0 on x86_64, bit 63 on
+    // arm64, nothing on Android arm64).  The two disagree on every real small
+    // object: an NSString literal of <= 8 ASCII chars is a tag-4 small object
+    // with bit 0 CLEAR, so this predicate answered "heap object", the callers
+    // dereferenced the word for an isa, and the process died with 0xC0000005
+    // in swift_getObjectType the moment one rode the Any path (array or
+    // dictionary element bridging, AnyObject boxing) -- while the same string
+    // bridged fine as a lone NSString property, because that path only sends
+    // messages (found twice by crashing: Xee's +allFileTypes, then its crop +
+    // Save As).  Same shape as the SWIFT_ISA_MASK override above: teach the
+    // predicate libobjc2's truth and the branches downstream are already
+    // right -- _swift_getClass() takes its object_getClass() arm, which
+    // libobjc2 answers for small objects, and the swift_unknownObjectRetain/
+    // Release family becomes the no-op a tagged pointer needs.  Deliberately
+    // NOT a change to heap_object_abi::ObjCReservedBitsMask: that constant
+    // also shapes the BridgeObject / String spare-bit ABI (shims/System.h),
+    // so widening it would be an ABI change, not a bug fix.
+    return (((uintptr_t) object) & SWIFT_LIBOBJC2_SMALL_OBJECT_MASK) != 0;
+#  else
     return (((uintptr_t) object) & heap_object_abi::ObjCReservedBitsMask);
+#  endif
 #else
     assert(!(((uintptr_t) object) & heap_object_abi::ObjCReservedBitsMask));
     return false;
