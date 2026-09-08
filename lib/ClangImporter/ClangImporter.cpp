@@ -3281,6 +3281,40 @@ ClangImporter::Implementation::lookupTypedef(clang::DeclarationName name) {
   return nullptr;
 }
 
+/// Whether a Clang declaration owned by \p Owner is part of the module unit
+/// for \p Filter.
+///
+/// A unit for a TOP-LEVEL module answers for the declarations its implicit
+/// (inferred, non-`explicit`) submodules own as well: `module * { export * }`
+/// files every header of an umbrella framework into its own submodule, and the
+/// importer attributes all of those declarations to the top-level wrapper
+/// module (getClangModuleForDecl), so a consumer asking that top-level unit for
+/// its top-level declarations -- swift-api-digester, swift-ide-test
+/// -print-module, symbol graphs -- must see them. Comparing the owning module
+/// exactly (the upstream behaviour since ab26b8b9d790) silently answered with
+/// only the umbrella header's own declarations for such a framework: on
+/// WinCatalyst the Foundation dump carried its overlay and none of its ObjC
+/// classes, and the same happened to Apple's Catalyst UIKit.
+///
+/// A unit for a SUBMODULE keeps the exact comparison, so the per-submodule
+/// enumeration that motivated the exact check still works. An `explicit`
+/// submodule is never folded into its parent: its declarations are visible
+/// only when it is imported by name, and its unit answers for them.
+static bool clangModuleCovers(const clang::Module *Filter,
+                              const clang::Module *Owner) {
+  if (Filter == Owner)
+    return true;
+  if (!Filter || !Owner || Filter->isSubModule())
+    return false;
+  for (const clang::Module *M = Owner; M; M = M->Parent) {
+    if (M == Filter)
+      return true;
+    if (M->IsExplicit)
+      return false;
+  }
+  return false;
+}
+
 static bool isDeclaredInModule(const ClangModuleUnit *ModuleFilter,
                                const Decl *VD) {
   // Sometimes imported decls get put into the clang header module. If we
@@ -3291,10 +3325,11 @@ static bool isDeclaredInModule(const ClangModuleUnit *ModuleFilter,
   // Because the ClangModuleUnit saved as a decl context will be saved as the top-level module, but
   // the ModuleFilter we're given might be a submodule (if a submodule was passed to
   // getTopLevelDecls, for example), we should compare the underlying Clang modules to determine
-  // module membership.
+  // module membership. (Harmony: a top-level filter covers its implicit
+  // submodules -- see clangModuleCovers.)
   if (auto ClangNode = VD->getClangNode()) {
     if (auto *ClangModule = ClangNode.getOwningClangModule()) {
-      return ModuleFilter->getClangModule() == ClangModule;
+      return clangModuleCovers(ModuleFilter->getClangModule(), ClangModule);
     }
   }
   auto ContainingUnit = VD->getDeclContext()->getModuleScopeContext();
@@ -3849,9 +3884,11 @@ void ClangModuleUnit::getTopLevelDecls(SmallVectorImpl<Decl*> &results) const {
     // Search it.
     owner.lookupVisibleDecls(*lookupTable, *actualConsumer);
 
-    // Add the extensions produced by importing categories.
+    // Add the extensions produced by importing categories. (Harmony: a
+    // top-level unit covers the categories its implicit submodules declare --
+    // see clangModuleCovers.)
     for (auto category : lookupTable->categories()) {
-      if (category->getOwningModule() == clangModule) {
+      if (clangModuleCovers(clangModule, category->getOwningModule())) {
         if (auto extension = cast_or_null<ExtensionDecl>(
           owner.importDecl(category, owner.CurrentVersion,
                           /*UseCanonical*/false))) {
@@ -3874,7 +3911,7 @@ void ClangModuleUnit::getTopLevelDecls(SmallVectorImpl<Decl*> &results) const {
     llvm::SmallPtrSet<ExtensionDecl *, 8> knownExtensions;
     for (auto entry : lookupTable->allGlobalsAsMembers()) {
       auto decl = cast<clang::NamedDecl *>(entry);
-      if (decl->getOwningModule() != clangModule) continue;
+      if (!clangModuleCovers(clangModule, decl->getOwningModule())) continue;
 
       Decl *importedDecl = owner.importDecl(decl, owner.CurrentVersion);
       if (!importedDecl) continue;
