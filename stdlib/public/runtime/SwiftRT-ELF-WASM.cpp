@@ -96,6 +96,16 @@ DECLARE_BOUNDS(objc_classlist)
 // list goes to libobjc2 as-is.
 DECLARE_EMPTY_METADATA_SECTION(objc_catlist, "awR")
 DECLARE_BOUNDS(objc_catlist)
+// The class STUBS -- and this is the list an APP's OWN classes are in.
+// GenMeta.cpp routes a class whose ivar layout depends on a superclass in
+// another binary (i.e. every `class Foo: UIView`) to addObjCClassStub() and
+// emits NO objc_classlist entry for it, so the classlist arm above sees only
+// the classes nobody writes.  Until 2026-09-12 such a class was reachable ONLY
+// through the Swift runtime's demangling getClass hook, under its MANGLED
+// name, so objc_getClass() on the name a compiled nib carries returned nil and
+// every storyboard/xib naming a Swift class decoded that object as nil.
+DECLARE_EMPTY_METADATA_SECTION(objc_stublist, "awR")
+DECLARE_BOUNDS(objc_stublist)
 
 void objc_load_swift_image_np(const char **selrefs_begin,
                               const char **selrefs_end,
@@ -103,6 +113,9 @@ void objc_load_swift_image_np(const char **selrefs_begin,
                               void **classlist_end) __attribute__((__weak__));
 void objc_load_swift_image_categories_np(void **catlist_begin,
                                          void **catlist_end)
+    __attribute__((__weak__));
+void objc_load_swift_image_stubs_np(void **stublist_begin,
+                                    void **stublist_end)
     __attribute__((__weak__));
 }
 #endif
@@ -179,6 +192,22 @@ static void swift_image_constructor() {
     objc_load_swift_image_categories_np(
         reinterpret_cast<void **>(const_cast<char *>(&__start_objc_catlist)),
         reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_catlist)));
+  }
+  // ...and this image's STUB classes, LAST.  A stub carries no name, so
+  // registering it means CALLING its initializer, which instantiates the Swift
+  // metadata and therefore walks the superclass chain -- so it must come after
+  // the classes and categories above.  (The PE arm has a sharper form of the
+  // same constraint: there it has to wait for a whole later constructor pass,
+  // because a statically-linked ObjC superclass registers at .CRT$XCLz.  On
+  // ELF the dynamic loader has already initialized dependency objects, and a
+  // Singleton class's superclass is by construction in another binary.)
+  // Weak: an older libobjc2 lacks the entry point and the stubs stay dormant
+  // (the old, lazy-only behaviour); swiftpm-uikit-smoke's nibNameLookup leg
+  // catches that staleness loudly.
+  if (&objc_load_swift_image_stubs_np != nullptr) {
+    objc_load_swift_image_stubs_np(
+        reinterpret_cast<void **>(const_cast<char *>(&__start_objc_stublist)),
+        reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_stublist)));
   }
 #endif
 }
