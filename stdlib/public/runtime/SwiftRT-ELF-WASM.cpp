@@ -193,22 +193,36 @@ static void swift_image_constructor() {
         reinterpret_cast<void **>(const_cast<char *>(&__start_objc_catlist)),
         reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_catlist)));
   }
-  // ...and this image's STUB classes, LAST.  A stub carries no name, so
-  // registering it means CALLING its initializer, which instantiates the Swift
-  // metadata and therefore walks the superclass chain -- so it must come after
-  // the classes and categories above.  (The PE arm has a sharper form of the
-  // same constraint: there it has to wait for a whole later constructor pass,
-  // because a statically-linked ObjC superclass registers at .CRT$XCLz.  On
-  // ELF the dynamic loader has already initialized dependency objects, and a
-  // Singleton class's superclass is by construction in another binary.)
-  // Weak: an older libobjc2 lacks the entry point and the stubs stay dormant
-  // (the old, lazy-only behaviour); swiftpm-uikit-smoke's nibNameLookup leg
-  // catches that staleness loudly.
-  if (&objc_load_swift_image_stubs_np != nullptr) {
-    objc_load_swift_image_stubs_np(
-        reinterpret_cast<void **>(const_cast<char *>(&__start_objc_stublist)),
-        reinterpret_cast<void **>(const_cast<char *>(&__stop_objc_stublist)));
-  }
+  // ⛔⛔ THE STUB-CLASS REGISTRATION IS **NOT CALLED HERE**, AND THAT IS MEASURED,
+  // NOT CAUTION.  The sections above are still bracketed so the list is available
+  // the moment there is a safe place to consume it -- there is not one in this
+  // constructor.
+  //
+  // Registering a stub means CALLING its initializer, which instantiates the
+  // Swift metadata and therefore WALKS THE SUPERCLASS CHAIN.  From an image
+  // constructor a superclass that is an imported ObjC class in a STATICALLY
+  // LINKED archive (libuikit-linux.a) has not registered yet -- its gnustep
+  // registration runs from its own TU constructors, whose order relative to
+  // swiftrt.o's is not ours to choose.  Measured 2026-09-12 with a control pair
+  // on one binary (examples/swiftpm-swiftuitest over the Linux SDK):
+  //
+  //    call DISABLED : 288 PASS, 3 FAIL  (exactly the documented render XFAILs)
+  //    call ENABLED  :   0 PASS, Signal 6 at startup --
+  //        "failed to demangle superclass of UIHostingController from mangled
+  //         name 'So16UIViewControllerC': unknown error"
+  //
+  // ⚠️ ELF CONSTRUCTOR PRIORITY CANNOT FIX IT: prioritised constructors
+  // (101..65535) run BEFORE all unprioritised ones, so there is no later slot to
+  // move into.  The COFF arm escapes only because PE gives it the `.CRT$XCT`
+  // pass, which sorts after the `.CRT$XCLz` class registrations.
+  //
+  // THE FIX IS A REDESIGN, and it is better on BOTH arms: have libobjc2 RECORD
+  // the range here and realize it on the first class-lookup MISS
+  // (`_objc_lookup_class`), when every image is initialised.  A missed name
+  // lookup is exactly the event the nib path cares about, and it drops the COFF
+  // arm's dependency on XCT too.
+  // docs/handoffs/2026-09-12-embed-segue-tier.md §5f.
+  (void)&objc_load_swift_image_stubs_np;
 #endif
 }
 SWIFT_ALLOWED_RUNTIME_GLOBAL_CTOR_END
