@@ -101,6 +101,16 @@ DECLARE_OBJC_SECTION(objc_superrefs)
 // per-image anchor problem as classrefs; the constructor canonicalizes
 // it before handing the list to libobjc2.
 DECLARE_OBJC_SECTION(objc_catlist)
+// HARMONY: the class STUBS -- and this is the list an APP's OWN classes are in.
+// GenMeta.cpp routes a class whose ivar layout depends on a superclass in
+// another binary (i.e. every `class Foo: UIView`) to addObjCClassStub() and
+// emits NO objc_classlist entry for it, so the classlist arm above sees only
+// the classes nobody writes.  Until 2026-09-12 such a class was reachable ONLY
+// through the Swift runtime's demangling getClass hook, under its MANGLED name,
+// so objc_getClass() on the name a compiled nib carries returned nil and every
+// storyboard/xib naming a Swift class decoded that object as nil.  Registered
+// in the XCT pass below, NOT at XCIS -- see the note there.
+DECLARE_OBJC_SECTION(objc_stublist)
 // HARMONY (W3B): the SELF-DESCRIBING class anchors IRGen defines for
 // clang-imported external ObjC classes (GenDecl.cpp
 // getAddrOfHarmonyPEObjCClassAnchor): each is a one-word constant whose
@@ -825,6 +835,30 @@ static void swift_resolve_static_objc_classrefs() {
             reinterpret_cast<void *>(GetProcAddress(
                 objcModule, "objc_load_swift_image_categories_np")))) {
       loadCategories(catlistBegin, catlistEnd);
+    }
+  }
+
+  // The STUB CLASSES -- this image's own `class Foo: <an imported ObjC class>`.
+  //
+  // ⚠️⚠️ HERE AND NOT AT XCIS, FOR THE SAME REASON THE CATEGORIES MOVED. A stub
+  // has no name; the only way to one is to CALL its initializer, which
+  // instantiates the Swift metadata and therefore WALKS THE SUPERCLASS. At XCIS
+  // a superclass that is a statically-linked imported ObjC class (uikit.lib's
+  // UIView in an exe) has not registered yet -- it registers at XCLz -- so the
+  // realization would run against a class the runtime has never heard of. XCT
+  // sorts after XCLz, and by then every linked-in class has registered.
+  //
+  // ⚠️ A separate probed entry point, like the categories one above: PE has no
+  // symbol versioning, so an absent probe on an older objc.dll leaves the stubs
+  // dormant (the old, lazy-only behaviour) instead of silently mis-passing
+  // arguments to objc_load_swift_image_np.
+  {
+    using objc_load_swift_stubs_fn = void (*)(void **, void **);
+    if (auto loadStubs = reinterpret_cast<objc_load_swift_stubs_fn>(
+            reinterpret_cast<void *>(GetProcAddress(
+                objcModule, "objc_load_swift_image_stubs_np")))) {
+      loadStubs(reinterpret_cast<void **>(&__start_objc_stublist + 1),
+                reinterpret_cast<void **>(&__stop_objc_stublist));
     }
   }
 
