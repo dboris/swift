@@ -23,7 +23,15 @@ set(LLVM_APPEND_VC_REV NO CACHE BOOL "")
 set(LLVM_ENABLE_PER_TARGET_RUNTIME_DIR YES CACHE BOOL "")
 set(LLVM_ENABLE_PYTHON NO CACHE BOOL "")
 
-set(LLVM_TARGETS_TO_BUILD X86 CACHE STRING "")
+# X86 is the host; AArch64 is a CROSS-EMIT backend, so this Windows-hosted
+# swift-frontend can produce arm64-v8a Android (and arm64 Linux) objects. It is NOT a
+# host-architecture change and does not make this an arm64 toolchain -- that is ADR
+# 0009's Axis B, a different build entirely.
+# Without it the failure names neither the target nor the backend: swiftc dies with
+# `Unknown command line argument '-aarch64-use-tbi'` while the driver cheerfully reports
+# a valid aarch64-unknown-linux-android24 target from -print-target-info, so the compile
+# looks supported right up to the point it is not.
+set(LLVM_TARGETS_TO_BUILD "X86;AArch64" CACHE STRING "")
 
 set(LLVM_BUILD_LLVM_DYLIB NO CACHE BOOL "")
 set(LLVM_BUILD_LLVM_C_DYLIB NO CACHE BOOL "")
