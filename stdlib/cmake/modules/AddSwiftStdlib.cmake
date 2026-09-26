@@ -2671,8 +2671,14 @@ function(add_swift_target_library name)
       # -install_name CMake would inject), which on ELF ALSO drops the soname --
       # consumers then record path-carrying DT_NEEDED entries and the binary
       # only loads from an exactly-mirrored directory layout. Name it explicitly.
-      # Host-gated: a native Linux build keeps CMake's own soname handling.
-      if(SWIFTLIB_SHARED AND sdk STREQUAL "LINUX" AND NOT SWIFT_HOST_VARIANT_SDK STREQUAL "LINUX")
+      # ⚠️ NOT host-gated (2026-09-26): the NO_SONAME above is set on EVERY host,
+      # so "a native Linux build keeps CMake's own soname handling" was false --
+      # there is none left to keep. A Linux-hosted aarch64 cross relink shipped a
+      # libswiftCore.so with no SONAME, every stdlib .so linked against it recorded
+      # DT_NEEDED lib/swift/linux/aarch64/libswiftCore.so, and nothing loaded. The
+      # native interop build had lost it too, masked only because its dependents
+      # link through -lswiftCore.
+      if(SWIFTLIB_SHARED AND sdk STREQUAL "LINUX")
         list(APPEND swiftlib_link_flags_all "-Wl,-soname,lib${name}.so")
       endif()
 
