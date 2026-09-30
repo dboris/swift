@@ -1801,6 +1801,10 @@ ERROR(attribute_requires_operator_identifier,none,
 ERROR(attribute_requires_single_argument,none,
       "%0 requires a function with one argument", (DeclAttribute))
 
+ERROR(attribute_requires_experimental_feature,none,
+      "'%0' is an experimental feature; use '-enable-experimental-feature %1'",
+      (DeclAttribute, StringRef))
+
 ERROR(nominal_type_not_attribute,none,
       "%kind0 cannot be used as an attribute", (const ValueDecl *))
 
