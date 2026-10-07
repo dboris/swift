@@ -109,3 +109,16 @@ headers = [
 #include <${header}>
 #endif
 % end
+
+// Harmony: the standard streams in Apple's shape. Darwin's _stdio.h declares them
+// `extern FILE *__stdoutp __swift_nonisolated_unsafe;` (sys/cdefs.h: the swift_attr
+// "nonisolated(unsafe)"), so Swift 6 code's `fflush(stdout)` compiles there; glibc's are plain
+// mutable globals, and the same line is an error ("reference to var 'stdout' is not
+// concurrency-safe"). A redeclaration carries the attribute onto glibc's declarations.
+#if __has_include(<stdio.h>) && defined(__has_attribute)
+#if __has_attribute(swift_attr)
+extern FILE *stdin __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *stdout __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *stderr __attribute__((__swift_attr__("nonisolated(unsafe)")));
+#endif
+#endif
