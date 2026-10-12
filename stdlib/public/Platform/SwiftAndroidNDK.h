@@ -153,4 +153,18 @@
 #include <android/trace.h>
 #include <android/versioning.h>
 
+// Harmony: the standard streams in Apple's shape -- the Bionic twin of SwiftGlibc.h's (Darwin's
+// _stdio.h declares them `__swift_nonisolated_unsafe`, so Swift 6 code's `fflush(stdout)` compiles
+// there; Bionic's are plain mutable globals, "reference to var 'stdout' is not concurrency-safe").
+// A redeclaration carries the attribute onto Bionic's declarations; clang's module merge keeps it
+// across the other modules' copies (llvm-project fork b3d7317c5149). Below API 23 Bionic's streams
+// are macros over __sF, not variables, and there is nothing to annotate. SwiftBionic.h: the same.
+#if defined(__has_attribute) && __ANDROID_API__ >= 23
+#if __has_attribute(swift_attr)
+extern FILE *_Nonnull stdin __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *_Nonnull stdout __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *_Nonnull stderr __attribute__((__swift_attr__("nonisolated(unsafe)")));
+#endif
+#endif
+
 #endif // SWIFT_ANDROID_NDK_MODULE

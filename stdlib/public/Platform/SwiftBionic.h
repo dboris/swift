@@ -42,4 +42,13 @@
 #include <uchar.h>
 #include <wchar.h>
 
+// Harmony: the standard streams in Apple's shape -- SwiftAndroidNDK.h has why.
+#if defined(__has_attribute) && __ANDROID_API__ >= 23
+#if __has_attribute(swift_attr)
+extern FILE *_Nonnull stdin __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *_Nonnull stdout __attribute__((__swift_attr__("nonisolated(unsafe)")));
+extern FILE *_Nonnull stderr __attribute__((__swift_attr__("nonisolated(unsafe)")));
+#endif
+#endif
+
 #endif // SWIFT_BIONIC_MODULE
