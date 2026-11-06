@@ -180,6 +180,12 @@ function(add_swift_compiler_modules_library name)
     # resource directory if needed.
     list(PREPEND sdk_option "-resource-dir" "${SWIFTLIB_DIR}")
   endif()
+  # An Android host needs the API level in its triple, as AddSwift.cmake gives
+  # the host libraries: the NDK's <sys/cdefs.h> rejects an unversioned one
+  # ("Unversioned target triples are not supported!").
+  if(SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
+    set(deployment_version "${SWIFT_ANDROID_API_LEVEL}")
+  endif()
   get_versioned_target_triple(target ${SWIFT_HOST_VARIANT_SDK}
       ${SWIFT_HOST_VARIANT_ARCH} "${deployment_version}")
 
@@ -213,6 +219,11 @@ function(add_swift_compiler_modules_library name)
     # Workaround for https://github.com/swiftlang/llvm-project/issues/7172
     list(APPEND swift_compile_options "-Xcc" "-Xclang" "-Xcc" "-fmodule-format=raw")
 
+  elseif(BOOTSTRAPPING_MODE STREQUAL "CROSSCOMPILE")
+    # The shims of THIS build, which the resource dir above also reaches: the
+    # native compiler's own lib/swift/shims is a second module map for the same
+    # modules ("redefinition of module 'SwiftShims'").
+    list(APPEND sdk_option "-I" "${SWIFTLIB_DIR}/..")
   elseif(swift_exec_bin_dir MATCHES ".*/swiftly/bin")
     # Detect and handle swiftly-managed hosts.
     execute_process(COMMAND swiftly use --print-location

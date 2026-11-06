@@ -502,7 +502,11 @@ if(BOOTSTRAPPING_MODE STREQUAL "BOOTSTRAPPING")
 endif()
 
 set(tooling_stdlib_deps)
-if(TARGET libSwiftScan)
+# The dependency is for a stdlib COMPILED BY THIS BUILD'S compiler (which loads libSwiftScan). A
+# CROSSCOMPILE build compiles the stdlib with the native compiler from SWIFT_NATIVE_SWIFT_TOOLS_PATH, and
+# there the dependency closes a cycle: the compiler's Swift half (swiftBasicSwift, swiftASTGen, ...)
+# depends on swift-stdlib-<host>, which depends on swiftCore -> libSwiftScan -> those same libraries.
+if(TARGET libSwiftScan AND NOT BOOTSTRAPPING_MODE MATCHES "^CROSSCOMPILE")
   list(APPEND tooling_stdlib_deps libSwiftScan)
 endif()
 

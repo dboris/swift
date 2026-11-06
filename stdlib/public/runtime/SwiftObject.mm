@@ -76,6 +76,9 @@ using namespace swift;
 // stdlib loads in Foundation-free processes, where the lookup returns Nil
 // and the callers' comparisons simply fail.  On Darwin NSObject lives in
 // libobjc and the eager form is fine; keep it for zero behavior delta.
+// Interop only, like every caller: a non-interop stdlib (the one an Android-
+// hosted compiler runs on) has no objc_lookUpClass.
+#if SWIFT_OBJC_INTEROP
 static Class _swiftObjectNSObjectClassIfPresent() {
 #if defined(__APPLE__)
   return [NSObject class];
@@ -83,6 +86,7 @@ static Class _swiftObjectNSObjectClassIfPresent() {
   return objc_lookUpClass("NSObject");
 #endif
 }
+#endif
 using namespace hashable_support;
 
 #if SWIFT_HAS_ISA_MASKING

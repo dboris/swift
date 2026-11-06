@@ -27,6 +27,50 @@
 #include <objbase.h>
 #include <string>
 #include <algorithm>
+#elif defined(__ANDROID__)
+// Bionic has no libuuid (Termux supplies one through its prefix). An Android-
+// hosted compiler gets the six libuuid entry points this file uses, with
+// libuuid's semantics: random (version 4, RFC 4122 variant) UUIDs from
+// arc4random_buf -- also for "time" UUIDs, which only need to be unique --,
+// the 36-character hyphenated form, and byte order for comparison (libuuid
+// compares big-endian fields, which is the same order).
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdio.h>
+static void uuid_generate_random(unsigned char *out) {
+  arc4random_buf(out, 16);
+  out[6] = (out[6] & 0x0F) | 0x40;
+  out[8] = (out[8] & 0x3F) | 0x80;
+}
+static void uuid_generate_time(unsigned char *out) { uuid_generate_random(out); }
+static void uuid_clear(unsigned char *out) { memset(out, 0, 16); }
+static int uuid_parse(const char *in, unsigned char *out) {
+  if (strlen(in) != 36)
+    return -1;
+  for (int i = 0, b = 0; i < 36; ++i) {
+    if (i == 8 || i == 13 || i == 18 || i == 23) {
+      if (in[i] != '-')
+        return -1;
+      continue;
+    }
+    if (!isxdigit((unsigned char)in[i]) || !isxdigit((unsigned char)in[i + 1]))
+      return -1;
+    char pair[3] = {in[i], in[i + 1], 0};
+    out[b++] = (unsigned char)strtoul(pair, nullptr, 16);
+    ++i;
+  }
+  return 0;
+}
+static void uuid_unparse_upper(const unsigned char *in, char *out) {
+  snprintf(out, 37,
+           "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+           in[0], in[1], in[2], in[3], in[4], in[5], in[6], in[7], in[8], in[9],
+           in[10], in[11], in[12], in[13], in[14], in[15]);
+}
+static int uuid_compare(const unsigned char *a, const unsigned char *b) {
+  return memcmp(a, b, 16);
+}
 #else
 #include <uuid/uuid.h>
 #endif

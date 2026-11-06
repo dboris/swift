@@ -6,6 +6,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   set(UUID_INCLUDE "")
   set(UUID_LIBRARIES "rpcrt4.lib")
+elseif(SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
+  # Bionic has no libuuid; UUID.cpp carries an Android implementation. (On a
+  # Linux build host find_package found the HOST's libuuid.so and linked it
+  # into the Android swift-frontend.)
+  set(UUID_INCLUDE "")
+  set(UUID_LIBRARIES "")
 else()
   find_package(UUID REQUIRED)
   set(UUID_INCLUDE "${UUID_INCLUDE_DIRS}")

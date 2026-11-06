@@ -26,6 +26,8 @@ function(includeSwiftSyntax)
   set(SWIFTSYNTAX_TARGET_NAMESPACE "_Compiler")
   set(SWIFTSYNTAX_EMIT_MODULE OFF)
 
+  swift_crosscompile_swift_flags(CMAKE_Swift_FLAGS)
+
   file(TO_CMAKE_PATH "${SWIFT_PATH_TO_SWIFT_SYNTAX_SOURCE}" swift_syntax_path)
   FetchContent_Declare(CompilerSwiftSyntax SOURCE_DIR "${swift_syntax_path}")
   FetchContent_MakeAvailable(CompilerSwiftSyntax)
@@ -33,6 +35,7 @@ function(includeSwiftSyntax)
   # FIXME: Use FetchContent_Declare's EXCLUDE_FROM_ALL after CMake 3.28
   FetchContent_GetProperties(CompilerSwiftSyntax BINARY_DIR binary_dir)
   set_property(DIRECTORY "${binary_dir}" PROPERTY EXCLUDE_FROM_ALL TRUE)
+  swift_crosscompile_order_after_stdlib("${binary_dir}")
 endfunction()
 includeSwiftSyntax()
 

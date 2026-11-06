@@ -59,13 +59,13 @@ function(_add_host_swift_compile_options name)
   target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:Swift>:-target;${SWIFT_HOST_TRIPLE}>)
   if(BOOTSTRAPPING_MODE STREQUAL "CROSSCOMPILE")
     add_dependencies(${name} swift-stdlib-${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_LIB_SUBDIR}-${SWIFT_HOST_VARIANT_ARCH})
-    target_compile_options(${name} PRIVATE
-      $<$<COMPILE_LANGUAGE:Swift>:-sdk;${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_ARCH_${SWIFT_HOST_VARIANT_ARCH}_PATH};>
-      $<$<COMPILE_LANGUAGE:Swift>:-resource-dir;${SWIFTLIB_DIR};>)
-    if(SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID" AND NOT "${SWIFT_ANDROID_NDK_PATH}" STREQUAL "")
-      swift_android_tools_path(${SWIFT_HOST_VARIANT_ARCH} tools_path)
-      target_compile_options(${name} PRIVATE $<$<COMPILE_LANGUAGE:Swift>:-tools-directory;${tools_path};>)
-    endif()
+    # The same SDK, resource dir and tools the fetched swift-syntax gets (below): with the whole build
+    # lib/swift as -resource-dir, the swift-syntax modules in lib/swift/host counted as SDK modules and
+    # their interfaces were refused (lib/Macros: "module 'SwiftSyntax' is in package 'Toolchain' but was
+    # built from a non-package interface").
+    set(cross_flags "")
+    swift_crosscompile_swift_flags(cross_flags)
+    target_compile_options(${name} PRIVATE "$<$<COMPILE_LANGUAGE:Swift>:SHELL:${cross_flags}>")
   endif()
 
   target_compile_options(${name} PRIVATE
@@ -110,6 +110,81 @@ function(_set_swift_cxx_interop_options name)
       "-cxx-interoperability-mode=default"
     )
   endif()
+endfunction()
+
+# The swift-syntax copies the compiler fetches (lib/SwiftSyntax, lib/CompilerSwiftSyntax) are
+# subprojects whose targets add_pure_swift_host_library never sees, so a CROSSCOMPILE build gives them
+# what it gives the in-tree host libraries above in two halves:
+#
+#   swift_crosscompile_swift_flags(<out-var>)   -- before FetchContent_MakeAvailable: the SDK, resource
+#       dir and tools that find the TARGET host's stdlib, as Swift flags every target there inherits;
+#   swift_crosscompile_order_after_stdlib(<binary-dir>) -- after it: every target in that tree (internal
+#       ones included, e.g. the SwiftSyntax5xx version markers) built after that stdlib.
+#
+# Without them swift-syntax compiled with only -target and failed "unable to load standard library for
+# target 'aarch64-unknown-linux-android24'" (an Android compiler cross-built on Linux, 2026-11-06).
+#
+# Their resource dir is a composite too: links to the parts of the build's lib/swift the frontend reads
+# (the platform's stdlib, the shims, the clang headers, apinotes) and NOT lib/swift/host, where
+# swift-syntax's own modules land. With the whole lib/swift as -resource-dir those modules counted as
+# "loaded from SDK", the importer took their interfaces over the binary modules beside them, and the
+# package rules then refused them ("module 'SwiftSyntax' is in package 'Toolchain' but was built from a
+# non-package interface").
+#
+# On Android the SDK they get is a composite sysroot: the NDK's, plus usr/lib/swift -> that resource dir.
+# The driver links these shared libraries with swiftrt.o from <sdk>/usr/lib/swift/<platform>/<arch>, not
+# from -resource-dir ("no such file or directory: .../ndk/.../sysroot/usr/lib/swift/android/aarch64/
+# swiftrt.o"), and the NDK is not ours to write into.
+function(_swift_crosscompile_link target link)
+  file(REMOVE "${link}")
+  file(CREATE_LINK "${target}" "${link}" SYMBOLIC)
+endfunction()
+
+function(swift_crosscompile_swift_flags out_var)
+  set(flags "${${out_var}}")
+  if(BOOTSTRAPPING_MODE STREQUAL "CROSSCOMPILE")
+    set(resource "${CMAKE_BINARY_DIR}/swift-host-resource-${SWIFT_HOST_VARIANT_ARCH}")
+    file(MAKE_DIRECTORY "${resource}")
+    foreach(part ${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_LIB_SUBDIR} shims clang apinotes)
+      _swift_crosscompile_link("${SWIFTLIB_DIR}/${part}" "${resource}/${part}")
+    endforeach()
+    set(sdk "${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_ARCH_${SWIFT_HOST_VARIANT_ARCH}_PATH}")
+    if(SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID")
+      set(composite "${CMAKE_BINARY_DIR}/swift-host-sysroot-${SWIFT_HOST_VARIANT_ARCH}")
+      file(MAKE_DIRECTORY "${composite}/usr/lib")
+      _swift_crosscompile_link("${sdk}/usr/include" "${composite}/usr/include")
+      file(GLOB entries RELATIVE "${sdk}/usr/lib" "${sdk}/usr/lib/*")
+      foreach(entry ${entries})
+        _swift_crosscompile_link("${sdk}/usr/lib/${entry}" "${composite}/usr/lib/${entry}")
+      endforeach()
+      _swift_crosscompile_link("${resource}" "${composite}/usr/lib/swift")
+      set(sdk "${composite}")
+    endif()
+    string(APPEND flags " -sdk ${sdk}")
+    string(APPEND flags " -resource-dir ${resource}")
+    if(SWIFT_HOST_VARIANT_SDK STREQUAL "ANDROID" AND NOT "${SWIFT_ANDROID_NDK_PATH}" STREQUAL "")
+      swift_android_tools_path(${SWIFT_HOST_VARIANT_ARCH} tools_path)
+      string(APPEND flags " -tools-directory ${tools_path}")
+    endif()
+  endif()
+  set(${out_var} "${flags}" PARENT_SCOPE)
+endfunction()
+
+function(swift_crosscompile_order_after_stdlib dir)
+  if(NOT BOOTSTRAPPING_MODE STREQUAL "CROSSCOMPILE")
+    return()
+  endif()
+  get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(target ${targets})
+    get_target_property(type ${target} TYPE)
+    if(NOT type STREQUAL "INTERFACE_LIBRARY")
+      add_dependencies(${target} swift-stdlib-${SWIFT_SDK_${SWIFT_HOST_VARIANT_SDK}_LIB_SUBDIR}-${SWIFT_HOST_VARIANT_ARCH})
+    endif()
+  endforeach()
+  get_property(subdirs DIRECTORY "${dir}" PROPERTY SUBDIRECTORIES)
+  foreach(subdir ${subdirs})
+    swift_crosscompile_order_after_stdlib("${subdir}")
+  endforeach()
 endfunction()
 
 function(_set_pure_swift_link_flags name relpath_to_lib_dir)

@@ -241,7 +241,11 @@ class LLVM(cmake_product.CMakeProduct):
         llvm_cmake_options.define('CMAKE_INSTALL_PREFIX:PATH', self.args.install_prefix)
         llvm_cmake_options.define('INTERNAL_INSTALL_PREFIX', 'local')
 
-        if host_target.startswith('linux'):
+        # An Android cross host needs the same toolchain file (CMAKE_SYSTEM_NAME
+        # Android, the compiler targets): without it LLVM was configured as
+        # "Android" with no --target and silently built for the BUILD host
+        # (x86-64 objects in an android-aarch64 libLLVMSupport.a).
+        if host_target.startswith(('linux', 'android')):
             toolchain_file = self.generate_linux_toolchain_file(
                 platform, arch,
                 crosscompiling=self.is_cross_compile_target(host_target))
