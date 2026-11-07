@@ -952,6 +952,12 @@ def wincatalyst_identity : Flag<["-"], "wincatalyst-identity">,
            "deployment floor) WITHOUT changing the codegen triple. SDK-baked, "
            "opt-in via the Swift SDK toolset">;
 
+def wincatalyst_identity_platform : Separate<["-"], "wincatalyst-identity-platform">,
+  HelpText<"WinCatalyst: the platform the identity presents, `ios` (the default) "
+           "or `macos` (os(macOS)=true, @available/#available(macOS) resolved "
+           "against -wincatalyst-deployment-version read as a macOS version). "
+           "Implies -wincatalyst-identity">;
+
 def wincatalyst_deployment_version : Separate<["-"], "wincatalyst-deployment-version">,
   HelpText<"WinCatalyst: the iOS deployment-target version #available/#unavailable "
            "fold against under -wincatalyst-identity (default 17.0)">;

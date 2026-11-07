@@ -732,7 +732,16 @@ void LangOptions::applyWinCatalystIdentityOverride() {
     return e.first == PlatformConditionKind::OS ||
            e.first == PlatformConditionKind::TargetEnvironment;
   });
-  addPlatformConditionValue(PlatformConditionKind::OS, "iOS");
+  if (WinCatalystIdentityMacOS) {
+    // Apple's own spelling set for a macOS target (setTarget's MacOSX arm), so
+    // both os(macOS) and the legacy os(OSX) hold. anyAppleOS stays out, as it
+    // does for the iOS identity: the SDK under the identity is WinCatalyst's,
+    // not Darwin's.
+    addPlatformConditionValue(PlatformConditionKind::OS, "OSX");
+    addPlatformConditionValue(PlatformConditionKind::OS, "macOS");
+  } else {
+    addPlatformConditionValue(PlatformConditionKind::OS, "iOS");
+  }
   // The opt-in escape hatch (the macCatalyst "macabi" precedent): lets an
   // iOS-shaped source reach WinCatalyst-only paths via
   // targetEnvironment(wincatalyst).

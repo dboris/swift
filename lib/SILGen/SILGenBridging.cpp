@@ -662,6 +662,73 @@ ManagedValue SILGenFunction::emitFuncToBlock(SILLocation loc,
   return emitManagedRValueWithCleanup(heapBlock);
 }
 
+/// WinCatalyst macOS identity: the value conversion behind "a 32-bit C 'long'
+/// imports as Int" (ClangImporter ImportType.cpp WinCatalystCLong; the lowered
+/// foreign type is Int32 / UInt32, Bridging.cpp). Int -> Int32 truncates, as C's
+/// implicit conversion to 'long' does on this target; Int32 -> Int sign-extends,
+/// UInt32 -> UInt zero-extends. Returns a null ManagedValue for any other pair.
+static bool isWinCatalystCLongPair(SILGenFunction &SGF, CanType fromType,
+                                   CanType toType) {
+  ASTContext &ctx = SGF.getASTContext();
+  if (!ctx.LangOpts.WinCatalystIdentityMacOS)
+    return false;
+  auto *from = fromType->getStructOrBoundGenericStruct();
+  auto *to = toType->getStructOrBoundGenericStruct();
+  if (!from || !to)
+    return false;
+  return (from == ctx.getIntDecl() && to == ctx.getInt32Decl()) ||
+         (from == ctx.getInt32Decl() && to == ctx.getIntDecl()) ||
+         (from == ctx.getUIntDecl() && to == ctx.getUInt32Decl()) ||
+         (from == ctx.getUInt32Decl() && to == ctx.getUIntDecl());
+}
+
+static ManagedValue emitWinCatalystCLongBridge(SILGenFunction &SGF,
+                                               SILLocation loc,
+                                               ManagedValue v,
+                                               CanType fromType,
+                                               CanType toType,
+                                               SILType loweredToTy) {
+  ASTContext &ctx = SGF.getASTContext();
+  if (!ctx.LangOpts.WinCatalystIdentityMacOS)
+    return ManagedValue();
+  auto *fromDecl = fromType->getStructOrBoundGenericStruct();
+  auto *toDecl = toType->getStructOrBoundGenericStruct();
+  if (!fromDecl || !toDecl)
+    return ManagedValue();
+
+  bool isSigned;
+  if ((fromDecl == ctx.getIntDecl() && toDecl == ctx.getInt32Decl()) ||
+      (fromDecl == ctx.getInt32Decl() && toDecl == ctx.getIntDecl()))
+    isSigned = true;
+  else if ((fromDecl == ctx.getUIntDecl() && toDecl == ctx.getUInt32Decl()) ||
+           (fromDecl == ctx.getUInt32Decl() && toDecl == ctx.getUIntDecl()))
+    isSigned = false;
+  else
+    return ManagedValue();
+
+  auto fromFields = fromDecl->getStoredProperties();
+  auto toFields = toDecl->getStoredProperties();
+  if (fromFields.size() != 1 || toFields.size() != 1)
+    return ManagedValue();
+
+  // Both are trivial: no cleanups to carry.
+  SILValue raw = SGF.B.createStructExtract(loc, v.getValue(), fromFields[0]);
+  SILType toRawTy = SILType::getPrimitiveObjectType(
+      toFields[0]->getInterfaceType()->getCanonicalType());
+  auto fromBits = raw->getType().castTo<BuiltinIntegerType>()->getFixedWidth();
+  auto toBits = toRawTy.castTo<BuiltinIntegerType>()->getFixedWidth();
+
+  SILValue converted = raw;
+  if (fromBits != toBits) {
+    std::string name = (fromBits > toBits) ? "trunc" : (isSigned ? "sext" : "zext");
+    name += "_Int" + llvm::utostr(fromBits) + "_Int" + llvm::utostr(toBits);
+    converted = SGF.B.createBuiltin(loc, ctx.getIdentifier(name), toRawTy,
+                                    SubstitutionMap(), {raw});
+  }
+  SILValue result = SGF.B.createStruct(loc, loweredToTy.getObjectType(), {converted});
+  return ManagedValue::forObjectRValueWithoutOwnership(result);
+}
+
 static ManagedValue emitNativeToCBridgedNonoptionalValue(SILGenFunction &SGF,
                                                          SILLocation loc,
                                                          ManagedValue v,
@@ -680,6 +747,11 @@ static ManagedValue emitNativeToCBridgedNonoptionalValue(SILGenFunction &SGF,
     return emitBridge##NativeType##To##BridgedType(SGF, loc, v);            \
   }
 #include "swift/SIL/BridgedTypes.def"
+
+  // WinCatalyst: Int / UInt -> a 32-bit C long's Int32 / UInt32.
+  if (auto converted = emitWinCatalystCLongBridge(SGF, loc, v, nativeType,
+                                                  bridgedType, loweredBridgedTy))
+    return converted;
 
   // Bridge thick to Objective-C metatypes.
   if (auto bridgedMetaTy = dyn_cast<AnyMetatypeType>(bridgedType)) {
@@ -1127,6 +1199,16 @@ static ManagedValue emitCBridgedToNativeValue(
       return emitBridgeForeignBoolToBool(SGF, loc, unwrapBridgedOptionals(v),
                                          SGF.SGM.getWindowsBoolToBoolFn());
     }
+  }
+
+  // WinCatalyst: a 32-bit C long's Int32 / UInt32 -> Int / UInt. The pair is
+  // tested BEFORE touching `v`: unwrapBridgedOptionals EMITS code, and running it
+  // for every bridged value (an NSString? -> String result, say) broke ownership.
+  if (isWinCatalystCLongPair(SGF, bridgedType, nativeType)) {
+    if (auto converted = emitWinCatalystCLongBridge(
+            SGF, loc, unwrapBridgedOptionals(v), bridgedType, nativeType,
+            loweredNativeTy))
+      return converted;
   }
 
   // Bridge intrusively reference counted smart pointers

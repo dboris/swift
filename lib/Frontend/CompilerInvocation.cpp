@@ -1685,6 +1685,16 @@ static bool ParseLangArgs(LangOptions &Opts, ArgList &Args,
   // it replaces the just-populated OS/targetEnvironment conditions. The codegen
   // Target is untouched. See docs/handoffs/2026-07-10-fluentui-apple-port-plan.md.
   Opts.WinCatalystIdentity |= Args.hasArg(OPT_wincatalyst_identity);
+  if (const Arg *A = Args.getLastArg(OPT_wincatalyst_identity_platform)) {
+    StringRef platform = A->getValue();
+    if (platform == "macos" || platform == "ios") {
+      Opts.WinCatalystIdentity = true;
+      Opts.WinCatalystIdentityMacOS = platform == "macos";
+    } else {
+      Diags.diagnose(SourceLoc(), diag::error_invalid_arg_value,
+                     A->getAsString(Args), A->getValue());
+    }
+  }
   if (const Arg *A = Args.getLastArg(OPT_wincatalyst_deployment_version)) {
     llvm::VersionTuple vers;
     if (vers.tryParse(A->getValue()))

@@ -196,6 +196,12 @@ bool swift::isPlatformActive(PlatformKind Platform, const LangOptions &LangOpts,
     if (!LangOpts.EnableAppExtensionRestrictions &&
         isApplicationExtensionPlatform(Platform))
       return false;
+    // The macOS identity (-wincatalyst-identity-platform macos): macOS specs
+    // are the active ones, so @available(macOS N,*) / #available(macOS N,*)
+    // resolve against the deployment floor and an iOS-only spec does not.
+    if (LangOpts.WinCatalystIdentityMacOS)
+      return Platform == PlatformKind::macOS ||
+             Platform == PlatformKind::macOSApplicationExtension;
     return Platform == PlatformKind::iOS ||
            Platform == PlatformKind::iOSApplicationExtension;
   }
@@ -260,7 +266,8 @@ PlatformKind swift::targetPlatform(const LangOptions &LangOpts) {
   // (LangOptions::getMinPlatformVersion under the same flag). See the
   // fluentui-apple port plan slice-0 "Half A".
   if (LangOpts.WinCatalystIdentity)
-    return PlatformKind::iOS;
+    return LangOpts.WinCatalystIdentityMacOS ? PlatformKind::macOS
+                                             : PlatformKind::iOS;
   return platformForTriple(LangOpts.Target,
                            LangOpts.EnableAppExtensionRestrictions);
 }

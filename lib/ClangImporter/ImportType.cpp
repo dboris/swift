@@ -216,6 +216,14 @@ namespace {
       /// The source type is 'NSUInteger'.
       NSUInteger,
 
+      /// WinCatalyst: the source type is the builtin C 'long' / 'unsigned long'
+      /// spelled directly, on an LLP64 target (32-bit long) under the macOS
+      /// identity. Where a BOOL would become Bool, it becomes Int / UInt -- what
+      /// Apple's LP64 'long' imports as -- and SIL lowers it back to Int32 /
+      /// UInt32 at the foreign boundary (TypeConverter::getLoweredCBridgedType,
+      /// SILGenBridging's truncate / extend).
+      WinCatalystCLong,
+
       /// The source type is 'va_list'.
       VAList,
 
@@ -268,6 +276,7 @@ namespace {
     case ImportHint::None:
     case ImportHint::Boolean:
     case ImportHint::NSUInteger:
+    case ImportHint::WinCatalystCLong:
     case ImportHint::Void:
     case ImportHint::IntrusivelyRefCountedSmartPtr:
       return false;
@@ -412,6 +421,14 @@ namespace {
       // FIXME: stop unwrapping typealiases
       if (!isCCharBuiltinType(kind))
         swiftType = unwrapCType(swiftType);
+
+      // WinCatalyst: Apple's 'long' is 64-bit (LP64) and imports as Int; this
+      // target's is 32-bit (LLP64) and imports as Int32. Under the macOS identity,
+      // hint it so bridgeable positions take Apple's Int (see WinCatalystCLong).
+      if ((kind == clang::BuiltinType::Long || kind == clang::BuiltinType::ULong) &&
+          Impl.SwiftContext.LangOpts.WinCatalystIdentityMacOS &&
+          Impl.getClangASTContext().getTargetInfo().getLongWidth() == 32)
+        return {swiftType, ImportHint::WinCatalystCLong};
       return swiftType;
     }
 
@@ -948,6 +965,7 @@ namespace {
 
         case ImportHint::Boolean:
         case ImportHint::NSUInteger:
+        case ImportHint::WinCatalystCLong:
           // Toss out the special rules for these types; we still want to
           // import as a wrapper.
           return {mappedType, ImportHint::None};
@@ -1039,6 +1057,11 @@ namespace {
       // If the imported typealias is unavailable, return the underlying type.
       if (decl->isUnavailable())
         return underlyingResult;
+
+      // WinCatalyst: only a DIRECT 'long' bridges to Int. A typedef of it keeps
+      // its typealias (= Int32) everywhere, so its own name and its uses agree.
+      if (underlyingResult.Hint == ImportHint::WinCatalystCLong)
+        return { mappedType, ImportHint::None };
 
       return { mappedType, underlyingResult.Hint };
     }
@@ -1694,6 +1717,23 @@ static ImportedType adjustTypeForConcreteImport(
     // come from a system module, make sure it stays unsigned.
     if (importKind == ImportTypeKind::Enum || !allowNSUIntegerAsInt)
       importedType = impl.SwiftContext.getUIntType();
+    break;
+
+  case ImportHint::WinCatalystCLong:
+    // WinCatalyst macOS identity: a 32-bit C 'long' becomes Apple's Int (and
+    // 'unsigned long' UInt) wherever a BOOL would become Bool. Storage -- record
+    // fields, globals, pointees -- keeps the real width. An ObjC collection
+    // element or a typedef is never a direct 'long', so neither reaches here.
+    if (bridging == Bridgeability::Full && canBridgeTypes(importKind) &&
+        importKind != ImportTypeKind::ObjCCollectionElement &&
+        importKind != ImportTypeKind::Typedef) {
+      if (importedType->isEqual(impl.SwiftContext.getInt32Decl()
+                                    ->getDeclaredInterfaceType()))
+        importedType = impl.SwiftContext.getIntType();
+      else if (importedType->isEqual(impl.SwiftContext.getUInt32Decl()
+                                         ->getDeclaredInterfaceType()))
+        importedType = impl.SwiftContext.getUIntType();
+    }
     break;
 
   case ImportHint::CFPointer:

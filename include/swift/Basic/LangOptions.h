@@ -728,6 +728,15 @@ namespace swift {
     /// ratchet up later via -wincatalyst-deployment-version).
     llvm::VersionTuple WinCatalystDeploymentVersion = llvm::VersionTuple(17, 0);
 
+    /// The platform the WinCatalyst identity presents: iOS (the default, the
+    /// fluentui-apple port) or macOS (-wincatalyst-identity-platform macos, the
+    /// AppKit identity: an unmodified Mac app such as NetNewsWire sees
+    /// os(macOS)=true and @available/#available(macOS N,*) resolved against
+    /// WinCatalystDeploymentVersion read as a MACOS version). Everything else
+    /// about the identity -- the untouched codegen triple, targetEnvironment
+    /// (wincatalyst), the constant-folded platform queries -- is shared.
+    bool WinCatalystIdentityMacOS = false;
+
     /// Apply the WinCatalyst identity override to the platform-condition set.
     /// Call AFTER setTarget(): it replaces the triple-derived OS condition with
     /// "iOS" and adds the "wincatalyst" targetEnvironment.

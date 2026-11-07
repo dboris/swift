@@ -26,7 +26,9 @@
 #include "swift/Basic/Assertions.h"
 #include "swift/SIL/SILModule.h"
 #include "swift/SIL/SILType.h"
+#include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/AST/DeclObjC.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -174,6 +176,26 @@ Type TypeConverter::getLoweredCBridgedType(AbstractionPattern pattern,
       return getObjCBoolType();
 
     return t;
+  }
+
+  // WinCatalyst macOS identity: a 32-bit C 'long' / 'unsigned long' that the
+  // importer gave Apple's Int / UInt (ImportType.cpp, WinCatalystCLong) crosses
+  // the C/ObjC boundary at its REAL width -- Int32 / UInt32 -- and SILGen
+  // truncates / extends between the two (SILGenBridging.cpp). The width check
+  // keeps an LP64 target, whose 'long' simply IS Int, out of this.
+  if (clangTy && clangTy->isBuiltinType() &&
+      Context.LangOpts.WinCatalystIdentityMacOS) {
+    auto kind = clangTy->castAs<clang::BuiltinType>()->getKind();
+    if ((kind == clang::BuiltinType::Long ||
+         kind == clang::BuiltinType::ULong) &&
+        Context.getClangModuleLoader() &&
+        Context.getClangModuleLoader()->getClangASTContext()
+                .getTargetInfo().getLongWidth() == 32) {
+      if (t->isInt())
+        return Context.getInt32Decl()->getDeclaredInterfaceType();
+      if (t->isUInt())
+        return Context.getUInt32Decl()->getDeclaredInterfaceType();
+    }
   }
 
   if (t->isForeignReferenceType()) {
