@@ -1675,6 +1675,14 @@ public:
   std::optional<MappedTypeNameKind>
   getSpecialTypedefKind(clang::TypedefNameDecl *decl);
 
+  /// WinCatalyst macOS identity: is \p decl a typedef of a 32-bit C 'long' /
+  /// 'unsigned long' that presents Apple's LP64 width -- `typealias = Int/UInt`,
+  /// bridged at the C boundary like a direct 'long' (ImportType.cpp,
+  /// WinCatalystCLong)? False off the identity, on an LP64 target, and for the
+  /// Windows SDK's own typedefs (DWORD, LONG, ULONG, HRESULT ...), which are
+  /// 32 bits BY CONTRACT rather than "whatever C long is".
+  bool isWinCatalystCLongTypedef(const clang::TypedefNameDecl *decl);
+
   /// Look up a name, accepting only typedef results.
   const clang::TypedefNameDecl *lookupTypedef(clang::DeclarationName);
 

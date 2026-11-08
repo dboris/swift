@@ -1608,6 +1608,18 @@ namespace {
             ImportDiagnosticAdder(Impl, Decl, Decl->getLocation()),
             isInSystemModule(DC), getTypedefBridgeability(Decl),
             getImportTypeAttrs(Decl), OTK_Optional);
+
+        // WinCatalyst macOS identity: a typedef of a 32-bit C 'long' names
+        // Apple's LP64 type (`typealias uLong = UInt`), so `uLong(x)` and
+        // `var crc: uLong = crc32(...)` mean what they mean on the Mac. Only its
+        // MEMORY uses keep 32 bits (ImportType.cpp, VisitTypedefType).
+        if (SwiftType && Impl.isWinCatalystCLongTypedef(Decl)) {
+          auto *builtin = cast<clang::BuiltinType>(
+              Decl->getUnderlyingType().getCanonicalType().getTypePtr());
+          SwiftType = builtin->getKind() == clang::BuiltinType::Long
+                          ? Impl.SwiftContext.getIntType()
+                          : Impl.SwiftContext.getUIntType();
+        }
       }
 
       if (!SwiftType)

@@ -266,7 +266,11 @@ namespace {
 
     ImportHint(ImportHintKind kind, Type bridgedType)
         : Kind(kind), BridgedType(bridgedType) {
-      assert(kind == ImportHint::ObjCBridged && "Wrong kind for bridged type");
+      // WinCatalyst: a typedef of a 32-bit C 'long' carries its Int / UInt
+      // typealias here too (VisitTypedefType), taken in bridgeable positions.
+      assert((kind == ImportHint::ObjCBridged ||
+              kind == ImportHint::WinCatalystCLong) &&
+             "Wrong kind for bridged type");
     }
   };
 
@@ -1043,6 +1047,13 @@ namespace {
         if (underlyingResult.AbstractType->isInt())
           break;
         LLVM_FALLTHROUGH;
+      case ImportHint::WinCatalystCLong:
+        // WinCatalyst: a typedef of a 32-bit C 'long' is Int / UInt while its
+        // underlying type is Int32 / UInt32 -- by design (see below).
+        if (underlyingResult.Hint == ImportHint::WinCatalystCLong &&
+            Impl.isWinCatalystCLongTypedef(type->getDecl()))
+          break;
+        LLVM_FALLTHROUGH;
       default:
         if (!underlyingResult.AbstractType->isEqual(mappedType)) {
           underlyingResult.AbstractType->dump(llvm::errs());
@@ -1058,10 +1069,22 @@ namespace {
       if (decl->isUnavailable())
         return underlyingResult;
 
-      // WinCatalyst: only a DIRECT 'long' bridges to Int. A typedef of it keeps
-      // its typealias (= Int32) everywhere, so its own name and its uses agree.
-      if (underlyingResult.Hint == ImportHint::WinCatalystCLong)
+      // WinCatalyst: a typedef of a 32-bit C 'long' (zlib's uLong) presents
+      // Apple's width -- its typealias is Int / UInt (ImportDecl.cpp) -- but
+      // MEMORY keeps 32 bits. So the use imports at the REAL width and carries
+      // the typealias in the hint: a bridgeable position (parameter, result,
+      // property, block) takes the typealias and SIL lowers it back to 32 bits
+      // at the boundary (Bridging.cpp tests the CANONICAL clang type); a record
+      // field, global or pointee keeps Int32 / UInt32, since naming the
+      // typealias there would claim a width the memory does not have. A Windows
+      // SDK typedef (DWORD, LONG ...) is 32 bits by contract and keeps its
+      // typealias everywhere, as every typedef of 'long' did before 2026-11-08.
+      if (underlyingResult.Hint == ImportHint::WinCatalystCLong) {
+        if (Impl.isWinCatalystCLongTypedef(type->getDecl()))
+          return { underlyingResult.AbstractType,
+                   ImportHint(ImportHint::WinCatalystCLong, mappedType) };
         return { mappedType, ImportHint::None };
+      }
 
       return { mappedType, underlyingResult.Hint };
     }
@@ -1435,6 +1458,29 @@ namespace {
 /// True if we're converting a function parameter, property type, or
 /// function result type, and can thus safely apply representation
 /// conversions for bridged types.
+bool ClangImporter::Implementation::isWinCatalystCLongTypedef(
+    const clang::TypedefNameDecl *decl) {
+  if (!decl || !SwiftContext.LangOpts.WinCatalystIdentityMacOS)
+    return false;
+  if (getClangASTContext().getTargetInfo().getLongWidth() != 32)
+    return false;
+  auto canonical = decl->getUnderlyingType().getCanonicalType();
+  auto *builtin = dyn_cast<clang::BuiltinType>(canonical.getTypePtr());
+  if (!builtin || (builtin->getKind() != clang::BuiltinType::Long &&
+                   builtin->getKind() != clang::BuiltinType::ULong))
+    return false;
+  // The Windows SDK's typedefs keep their contract width: by the module that
+  // owns them, or -- parsed textually -- by the SDK's install path.
+  if (auto *owner = decl->getOwningModule())
+    if (owner->getTopLevelModuleName() == "WinSDK")
+      return false;
+  auto &SM = getClangASTContext().getSourceManager();
+  auto file = SM.getFilename(SM.getFileLoc(decl->getLocation()));
+  if (file.contains("Windows Kits"))
+    return false;
+  return true;
+}
+
 static bool canBridgeTypes(ImportTypeKind importKind) {
   switch (importKind) {
   case ImportTypeKind::Abstract:
@@ -1723,11 +1769,16 @@ static ImportedType adjustTypeForConcreteImport(
     // WinCatalyst macOS identity: a 32-bit C 'long' becomes Apple's Int (and
     // 'unsigned long' UInt) wherever a BOOL would become Bool. Storage -- record
     // fields, globals, pointees -- keeps the real width. An ObjC collection
-    // element or a typedef is never a direct 'long', so neither reaches here.
+    // element never reaches here as a direct 'long'; a typedef DECLARATION is
+    // decided in ImportDecl.cpp (isWinCatalystCLongTypedef). A typedef USE
+    // carries its Int / UInt typealias in the hint (VisitTypedefType), and a
+    // bridgeable position takes that name rather than the bare Int.
     if (bridging == Bridgeability::Full && canBridgeTypes(importKind) &&
         importKind != ImportTypeKind::ObjCCollectionElement &&
         importKind != ImportTypeKind::Typedef) {
-      if (importedType->isEqual(impl.SwiftContext.getInt32Decl()
+      if (hint.BridgedType)
+        importedType = hint.BridgedType;
+      else if (importedType->isEqual(impl.SwiftContext.getInt32Decl()
                                     ->getDeclaredInterfaceType()))
         importedType = impl.SwiftContext.getIntType();
       else if (importedType->isEqual(impl.SwiftContext.getUInt32Decl()
