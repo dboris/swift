@@ -5094,6 +5094,35 @@ IRGenModule::getAddrOfMetaclassObject(ClassDecl *decl,
     return entry;
   }
 
+  // HARMONY (W3B, Swift-defined superclass in ANOTHER DLL -- win-catalyst
+  // NetNewsWire, 2026-11-07): a Swift class subclassing a Swift class of a
+  // different module that is its own DLL (`.library(type: .dynamic)`) emits its
+  // ObjC metaclass with a superclass word pointing at that class's metaclass
+  // ($s...CMm) -- a static-initializer data reference PE cannot resolve across
+  // images ("undefined symbol: $s6RSCore19MainThreadOperationCMm"; the DLL
+  // exports it only as __imp_ DATA). Reference the self-describing metaclass
+  // anchor instead: the swiftrt constructor (.CRT$XCIS) rewrites a metaclass
+  // isa/superclass word in .hmny_manchor to the canonical metaclass found by
+  // runtime name, and the defining DLL initialized (registered its classes)
+  // before this image's constructors run. Only when that module is NOT a static
+  // library -- a statically linked module shares this image, whose own classes
+  // register only after the fixup pass, so its direct reference must stay.
+  // Either metaclass kind: a pure Swift class's is the SWIFT STUB (same $s...CMm
+  // symbol, measured: `class Sub: Base` across two modules referenced
+  // `@"$s1A4BaseCMm" = external dllimport global`), an @objc one's the ObjC kind.
+  if (TargetInfo.OutputObjectFormat == llvm::Triple::COFF && ObjCInterop &&
+      !forDefinition && !decl->hasClangNode() && useDllStorage(Triple)) {
+    ModuleDecl *defining = decl->getParentModule();
+    if (defining && defining != getSwiftModule() &&
+        !defining->isStaticLibrary()) {
+      auto &entry = GlobalVars[entity];
+      if (!entry)
+        entry = getAddrOfHarmonyPEObjCClassAnchor(*this, decl,
+                                                  /*isMetaclass=*/true);
+      return entry;
+    }
+  }
+
   auto DbgTy = DebugTypeInfo::getObjCClass(decl, getPointerSize(),
                                            getPointerAlignment());
   auto addr = getAddrOfLLVMVariable(entity, forDefinition, DbgTy);
