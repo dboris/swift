@@ -346,6 +346,25 @@ internal enum _KnownCocoaString {
       self = .tagged
       return
     }
+#if !canImport(Darwin)
+    // HARMONY: a libobjc2 SMALL OBJECT -- an NSString of <= 8 ASCII characters
+    // is one (tag 4 in the low THREE bits; OBJC_SMALL_OBJECT_MASK is 7) -- has
+    // no isa word.  _isObjCTaggedPointer tests Apple's reserved-bits mask (bit
+    // 0 on x86_64), so it answers false for it, and the class read below then
+    // dereferenced the tagged word: 0xC0000005 in _swift_classOfObjCHeapObject
+    // the first time a bridged Swift string was compared with a short ObjC
+    // literal (-isEqual: / -isEqualToString: on __StringStorage; NetNewsWire's
+    // launch, win-catalyst lesson #1202).  Classified as plain `.cocoa`, NOT
+    // `.tagged`: the `.tagged` arms decode Apple's tagged-string payload, while
+    // every `.cocoa` arm talks to the object by message, which libobjc2
+    // resolves for small objects.  (The mask itself stays Apple's -- it also
+    // shapes the BridgeObject spare-bit ABI; same reasoning as the runtime's
+    // isObjCTaggedPointer fix in Private.h.)
+    if unsafe (unsafeBitCast(str, to: UInt.self) & 7) != 0 {
+      self = .cocoa
+      return
+    }
+#endif
 #endif
 
     switch unsafe unsafeBitCast(_swift_classOfObjCHeapObject(str), to: UInt.self) {
