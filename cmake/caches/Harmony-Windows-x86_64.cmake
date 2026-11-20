@@ -2,8 +2,8 @@
 # trimmed to what the Harmony toolchain dist actually ships (ADR 0006 /
 # the W3 handoff): clang (CGObjCGNUstep3) + lld + swift-frontend/swiftc +
 # the swift-syntax host libs + resource headers + the llvm binutils the
-# wincat build consumes.  No lldb / clangd / clang-tidy / sourcekit /
-# remote-mirror; X86 only; no Python/libxml2/zlib (W1.1: any MSYS copy
+# wincat build consumes, plus sourcekitd in-process (see SWIFT_BUILD_SOURCEKIT
+# below).  No lldb / clangd / clang-tidy / remote-mirror; X86 only; no Python/libxml2/zlib (W1.1: any MSYS copy
 # poisons an MSVC-ABI build, and nothing kept here needs them).
 
 set(LLVM_ENABLE_PROJECTS
@@ -52,7 +52,15 @@ set(CLANG_INCLUDE_TESTS NO CACHE BOOL "")
 
 set(SWIFT_INCLUDE_DOCS NO CACHE BOOL "")
 set(SWIFT_INCLUDE_TESTS NO CACHE BOOL "")
-set(SWIFT_BUILD_SOURCEKIT NO CACHE BOOL "")
+# SourceKit, for sourcekitdInProc.dll ONLY (2026-11-19): the half of code
+# completion that IS the compiler. sourcekit-lsp.exe is a protocol front end
+# with no compiler inside; it loads this library from the toolchain a
+# compile command names, so a page compiled by this fork is completed by this
+# fork -- same module format, same ObjC interop, same importer. The stock
+# sourcekitd read this fork's .swiftmodules only as long as the two happened
+# to serialize alike. No XPC off Darwin, so the in-process library is the
+# whole of it; libdispatch + BlocksRuntime for the host build with it.
+set(SWIFT_BUILD_SOURCEKIT YES CACHE BOOL "")
 set(SWIFT_BUILD_ENABLE_PARSER_LIB YES CACHE BOOL "")
 set(SWIFT_BUILD_STDLIB_EXTRA_TOOLCHAIN_CONTENT NO CACHE BOOL "")
 set(SWIFT_BUILD_STDLIB_CXX_MODULE NO CACHE BOOL "")
@@ -97,6 +105,7 @@ set(SWIFT_INSTALL_COMPONENTS
       clang-builtin-headers
       tools
       swift-syntax-lib
+      sourcekit-inproc
     CACHE STRING "")
 
 set(LLVM_DISTRIBUTION_COMPONENTS
